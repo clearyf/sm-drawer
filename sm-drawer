@@ -1,0 +1,44 @@
+#!/usr/bin/env tclsh
+
+package require TclOO
+package require Tk
+
+#### Setup canvas + widgets
+
+canvas .c -background white
+button .q -text {Quit} -command exit
+
+pack .c -side top -expand true -fill both
+pack .q -side bottom
+
+bind .c <3> "handle_click %x %y"
+
+#### Globals
+
+set state_idx 0
+
+################################################################################
+
+oo::class create state {
+    variable Rectangle Text
+    constructor {x y id} {
+        set Rectangle [.c create rectangle $x $y [expr {$x + 50}] [expr {$y + 20}] -fill lightgrey]
+        set Text [.c create text [expr {$x + 5}] [expr {$y + 5}] -text "state$id" -anchor nw]
+        .c bind $Rectangle <B1-Motion> "[self object] move %x %y"
+        .c bind $Text <B1-Motion> "[self object] move %x %y"
+    }
+    destructor {
+        .c delete $Rectangle $Text
+    }
+    method move {new_x new_y} {
+        lassign [.c coords $Rectangle] old_x old_y
+        .c move $Rectangle [expr {$new_x - $old_x}] [expr {$new_y - $old_y}]
+        .c move $Text [expr {$new_x - $old_x}] [expr {$new_y - $old_y}]
+    }
+}
+
+proc handle_click {x y} {
+    global state_idx
+    incr state_idx
+    state new $x $y $state_idx
+}
