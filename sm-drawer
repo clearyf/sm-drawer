@@ -5,17 +5,87 @@ package require Tk
 
 # TODO
 #
-# - draw transitions
-# - save/load
 # - ensure each state name is unique
-# - metadata (class names + identifiers + foobar)
+# - initial + final state
+# - class name
+# - draw boxes around states
+#
 # - hierarchical states
-# - make everything prettier
+#
+# - mark parallel states
+#
+# - testing (esp notifier to start with)
+
+################################################################################
+
+# notifier class ala QObject signals/slots
+oo::class create notifier {
+    variable Listeners
+    constructor {} {
+        set Listeners [dict create]
+    }
+    destructor {
+        my emit destroyed
+    }
+    method connect {name dst args} {
+        if {[dict exists $Listeners $name]} {
+            set idx [lsearch -exact [dict get $Listeners $name] [list $dst {*}$args]]
+            if {$idx != -1} {
+                # already present, break loop
+                return
+            }
+        }
+        dict lappend Listeners $name [list $dst {*}$args]
+        # monitor destroyed signal from dst, so we can disconnect it
+        # when it is destroyed.
+        $dst connect destroyed [self object] disconnect_obj $dst
+    }
+    method disconnect {name dst args} {
+        if {[dict exists $Listeners $name]} {
+            set entries [dict get $Listeners $name]
+            set idx [lsearch -exact $entries [list $dst {*}$args]]
+            if {$idx != -1} {
+                dict set Listeners $name [lreplace $entries $idx $idx]
+            }
+        }
+    }
+    # this loops through all connections and disconnects just one
+    # object
+    method disconnect_obj {dst} {
+        dict for {k v} $Listeners {
+            set entries [dict get $Listeners $k]
+            set indices {}
+            for {set i 0} {$i<[llength $entries]} {incr i} {
+                if {[lindex [lindex $entries $i] 0] == $dst} {
+                    lappend indices $i
+                }
+            }
+            foreach index $indices {
+                set entries [lreplace $entries $index $index]
+            }
+            dict set Listeners $k $entries
+        }
+    }
+    method emit {name args} {
+        if {[dict exists $Listeners $name]} {
+            foreach listener [dict get $Listeners $name] {
+                {*}$listener {*}$args
+            }
+        }
+    }
+}
+
+# some tests for notifier
+# TODO
+
+################################################################################
 
 # wrap canvas object
 oo::class create my_app {
+    superclass notifier
     variable Canvas StateIdx Selected Transitions States CurState
     constructor {c} {
+        next
         set Canvas $c
         set StateIdx 0
         set Selected {}
@@ -24,20 +94,111 @@ oo::class create my_app {
         set States {}
 
         canvas $c -background white
-        button .q -text {Quit} -command exit
-        label .l -text {Idle}
-        button .a -text {Add State} -command "[self object] switch_to_add_state_mode"
-        button .t -text {Add Transition} -command "[self object] switch_to_add_transition_mode"
+        button .save -text {Save} -command "[self object] save"
+        button .load -text {Load} -command "[self object] load"
+        button .quit -text {Quit} -command exit
+        label .status_bar -text {Idle}
+        button .add_state -text {Add State} -command "[self object] switch_to_add_state_mode"
+        button .add_trans -text {Add Transition} -command "[self object] switch_to_add_transition_mode"
 
-        pack .a .t -side top
+        pack .add_state .add_trans -side top
         pack $Canvas -expand true -fill both
-        pack .q .l -side bottom
+        pack .quit .status_bar .load .save -side bottom
     }
     destructor {
+        # teardown all notifications  before destroying the canvas
+        next
         destroy $Canvas
     }
     method set_status_bar {text} {
-        .l configure -text $text
+        .status_bar configure -text $text
+    }
+    method save {} {
+        set f [open "saved_data.ini" "w"]
+        # first save the states
+        foreach state $States {
+            $state serialise $f
+        }
+        puts $f "\[Transitions\]"
+        foreach transition $Transitions {
+            $transition serialise $f
+        }
+        close $f
+    }
+    method load {} {
+        if {$CurState != "idle"} {
+            return
+        }
+        while {[llength $States] > 0} {
+            [lindex $States end] destroy
+        }
+        # destroying all states destroys all transitions too
+
+        set f [open "saved_data.ini" "r"]
+        set got_transitions false
+        set name {}
+        set x {}
+        set y {}
+        while {[gets $f line] >= 0} {
+            switch -regexp -matchvar value -- $line {
+                {\[Transitions\]} {
+                    # flush existing state if any
+                    if {$name != {} && $x != {} && $y != {}} {
+                        set new_state [state new $Canvas [self object] $x $y $name]
+                        lappend States $new_state
+                        $new_state connect destroyed [self object] state_destroyed $new_state
+                    }
+                    break
+                }
+                {\[State\]} {
+                    # flush existing state if any
+                    if {$name != {} && $x != {} && $y != {}} {
+                        set new_state [state new $Canvas [self object] $x $y $name]
+                        lappend States $new_state
+                        $new_state connect destroyed [self object] state_destroyed $new_state
+                        set name {}
+                        set x {}
+                        set y {}
+                    }
+                }
+                {name=(.*)}  {
+                    set name [lindex $value 1]
+                }
+                {x=(.*)} {
+                    set x [lindex $value 1]
+                }
+                {y=(.*)} {
+                    set y [lindex $value 1]
+                }
+                default {
+                    puts "Error parsing state: $line"
+                }
+            }
+        }
+
+        # Now read the transitions
+        while {[gets $f line] >= 0} {
+            if {[regexp {(.*)=(.*)} $line line src_name dst_name]} {
+                # lookup src_name & dst_name
+                set src [my get_state $src_name]
+                set dst [my get_state $dst_name]
+
+                set new_transition [transition new $Canvas $src $dst]
+                lappend Transitions $new_transition
+                $new_transition connect destroyed [self object] transition_destroyed $new_transition
+            } else {
+                puts "Error parsing transition: $line"
+            }
+        }
+        close $f
+    }
+    method get_state {name} {
+        foreach state $States {
+            if {$name == [$state get_name]} {
+                return $state
+            }
+        }
+        throw STATE_NOT_FOUND "No state called $name found!"
     }
     method switch_to_add_state_mode {} {
         if {$CurState != "idle"} {
@@ -56,8 +217,24 @@ oo::class create my_app {
         bind $Canvas <Button-1> {}
         $Canvas configure -cursor left_ptr
         my set_status_bar {Idle}
-        incr StateIdx
-        lappend States [state new $Canvas [self object] $x $y "state$StateIdx"]
+        # loop until there is no state with this name; this is
+        # required in case we save a state graph and then load it
+        # again.  Alternative would be save the StateIdx in the saved
+        # data, but we don't want to leak implementation details like
+        # that.
+        try {
+            while {true} {
+                incr StateIdx
+                my get_state "state$StateIdx"
+            }
+        } trap {STATE_NOT_FOUND} {} {}
+        set new_state [state new $Canvas [self object] $x $y "state$StateIdx"]
+        lappend States $new_state
+        $new_state connect destroyed [self object] state_destroyed $new_state
+    }
+    method state_destroyed {state} {
+        set idx [lsearch -exact $States $state]
+        set States [lreplace $States $idx $idx]
     }
     method switch_to_add_transition_mode {} {
         if {$CurState != "idle"} {
@@ -75,7 +252,9 @@ oo::class create my_app {
             my set_status_bar {Select the second state...}
             return true
         } else {
-            lappend Transitions [transition new $Canvas $Selected $obj]
+            set new_transition [transition new $Canvas $Selected $obj]
+            lappend Transitions $new_transition
+            $new_transition connect destroyed [self object] transition_destroyed $new_transition
             # deselect other state
             $Selected deselect
             set Selected {}
@@ -89,6 +268,10 @@ oo::class create my_app {
             my set_status_bar {Idle}
             set Selected {}
         }
+    }
+    method transition_destroyed {transition} {
+        set idx [lsearch -exact $Transitions $transition]
+        set Transitions [lreplace $Transitions $idx $idx]
     }
     method popup_menu {obj} {
         if {[winfo exists .popup]} {
@@ -109,36 +292,36 @@ oo::class create my_app {
 }
 
 oo::class create state {
-    variable Canvas App Id Name Selected Listeners
+    superclass notifier
+    variable Canvas App Id Name Selected
     constructor {c a x y name} {
+        next
         set Canvas $c
         set App $a
         set Name $name
         set Selected false
-        set Listeners {}
         set Id [$Canvas create text $x $y -text $name -fill black -activefill red]
         $Canvas bind $Id <Button-1> "[self object] select"
         $Canvas bind $Id <B1-Motion> "[self object] move %x %y"
         $Canvas bind $Id <3> "$App popup_menu [self object]"
     }
     destructor {
-        my emit destroyed
         $Canvas delete $Id
+        next
+    }
+    method serialise {f} {
+        puts $f "\[State\]"
+        puts $f "name=[my get_name]"
+        lassign [my get_coords] x y
+        puts $f "x=$x"
+        puts $f "y=$y"
     }
     method get_name {} {
         return $Name
     }
-    method register {dst} {
-        lappend Listeners $dst
-    }
-    method emit {args} {
-        foreach listener $Listeners {
-            $listener notify [self object] {*}$args
-        }
-    }
     method move {x y} {
         $Canvas moveto $Id $x $y
-        my emit move $x $y
+        my emit moved $x $y
     }
     method get_coords {} {
         $Canvas coords $Id
@@ -165,18 +348,26 @@ oo::class create state {
 }
 
 oo::class create transition {
+    superclass notifier
     variable Canvas Src Dst Id
     constructor {canvas src dst} {
+        next
         set Canvas $canvas
         set Src $src
         set Dst $dst
         set Id {}
         my CreateLine
-        $Src register "[self object]"
-        $Dst register "[self object]"
+        $Src connect moved [self object] move
+        $Dst connect moved [self object] move
+        $Src connect destroyed [self object] state_destroyed
+        $Dst connect destroyed [self object] state_destroyed
     }
     destructor {
         $Canvas delete $Id
+        next
+    }
+    method serialise {f} {
+        puts $f "[$Src get_name]=[$Dst get_name]"
     }
     method CreateLine {} {
         if {$Id != {}} {
@@ -184,16 +375,12 @@ oo::class create transition {
         }
         set Id [$Canvas create line {*}[$Src get_coords] {*}[$Dst get_coords] -arrow last]
     }
-    method notify {src command args} {
-        switch -exact $command {
-            move {
-                # TODO howto move line instead of replacing it?
-                my CreateLine
-            }
-            destroyed {
-                my destroy
-            }
-        }
+    method move {x y} {
+        # TODO howto move line instead of replacing it?
+        my CreateLine
+    }
+    method state_destroyed {} {
+        my destroy
     }
 }
 
