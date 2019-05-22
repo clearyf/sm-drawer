@@ -146,26 +146,30 @@ oo::class create my_app {
         set name {}
         set x {}
         set y {}
+        set type {}
         while {[gets $f line] >= 0} {
             switch -regexp -matchvar value -- $line {
                 {\[Transitions\]} {
                     # flush existing state if any
-                    if {$name != {} && $x != {} && $y != {}} {
+                    if {$name != {} && $x != {} && $y != {} && $type != {}} {
                         set new_state [state new $Canvas [self object] $x $y $name]
                         lappend States $new_state
                         $new_state connect destroyed [self object] state_destroyed $new_state
+                        $new_state set_type $type
                     }
                     break
                 }
                 {\[State\]} {
                     # flush existing state if any
-                    if {$name != {} && $x != {} && $y != {}} {
+                    if {$name != {} && $x != {} && $y != {} && $type != {}} {
                         set new_state [state new $Canvas [self object] $x $y $name]
                         lappend States $new_state
                         $new_state connect destroyed [self object] state_destroyed $new_state
+                        $new_state set_type $type
                         set name {}
                         set x {}
                         set y {}
+                        set type {}
                     }
                 }
                 {name=(.*)}  {
@@ -176,6 +180,9 @@ oo::class create my_app {
                 }
                 {y=(.*)} {
                     set y [lindex $value 1]
+                }
+                {type=(.*)} {
+                    set type [lindex $value 1]
                 }
                 default {
                     puts "Error parsing state: $line"
@@ -262,7 +269,6 @@ oo::class create my_app {
             set new_transition [transition new $Canvas $Selected $obj]
             lappend Transitions $new_transition
             $new_transition connect destroyed [self object] transition_destroyed $new_transition
-            # deselect other state
             $Selected deselect
             set Selected {}
             set CurState idle
@@ -308,14 +314,28 @@ oo::class create my_app {
         wm attributes .popup -type popup_menu
         set parent_geo [winfo geometry .]
         regexp {[0-9]+x[0-9]+\+([0-9]+)\+([0-9]+)} $parent_geo parent_geo parent_x parent_y
+        # make popup appear somewhere near the mouse cursor...
         wm geometry .popup "+[expr {$x + $parent_x}]+[expr {$y + $parent_y}]"
         label .popup.l -text "Menu: [$obj get_name]"
+        label .popup.t -text "Type: [$obj get_type]"
         entry .popup.e
         .popup.e insert 0 [$obj get_name]
         button .popup.r -text {Rename} -command [list [self object] popup_rename_state $obj]
+        button .popup.i -text {Set Initial} -command [list [self object] set_state_type $obj initial]
+        button .popup.n -text {Set Normal} -command [list [self object] set_state_type $obj normal]
+        button .popup.f -text {Set Final} -command [list [self object] set_state_type $obj final]
         button .popup.d -text {Delete} -command [list [self object] popup_destroy_state $obj]
         button .popup.c -text {Close} -command [list destroy .popup]
-        pack .popup.l .popup.e .popup.r .popup.d .popup.c
+        pack .popup.l .popup.t .popup.e .popup.r .popup.i .popup.f .popup.n .popup.d .popup.c
+    }
+    method set_state_type {obj type} {
+        foreach state $States {
+            if {[$state get_type] == $type} {
+                $state set_normal
+                break
+            }
+        }
+        $obj set_type $type
     }
 }
 
@@ -323,7 +343,7 @@ oo::class create my_app {
 
 oo::class create state {
     superclass notifier
-    variable Canvas App Name Selected Tid Rid PointerOffset
+    variable Canvas App Name Selected Tid Rid PointerOffset Type
     constructor {c a x y name} {
         next
         set Canvas $c
@@ -332,7 +352,8 @@ oo::class create state {
         set Selected false
         set PointerOffset [list 0 0]
         set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
-        set Rid [$Canvas create rectangle [$Canvas bbox $Tid] -fill lightgrey]
+        set Rid [$Canvas create rectangle [$Canvas bbox $Tid]]
+        my set_normal
         $Canvas lower $Rid $Tid
         $Canvas bind $Tid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
         $Canvas bind $Rid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
@@ -364,6 +385,7 @@ oo::class create state {
     method serialise {f} {
         puts $f "\[State\]"
         puts $f "name=[my get_name]"
+        puts $f "type=[my get_type]"
         lassign [my get_coords] x y
         puts $f "x=$x"
         puts $f "y=$y"
@@ -391,6 +413,28 @@ oo::class create state {
         set Rid [$Canvas create rectangle [$Canvas bbox $Tid] -fill lightgrey]
         $Canvas lower $Rid $Tid
         my emit redrawn
+    }
+    method get_type {} {
+        return $Type
+    }
+    method set_type {type} {
+        switch -exact $type {
+            normal { my set_normal }
+            initial { my set_initial }
+            final { my set_final }
+        }
+    }
+    method set_normal {} {
+        set Type normal
+        $Canvas itemconfigure $Rid -fill lightgrey
+    }
+    method set_initial {} {
+        set Type initial
+        $Canvas itemconfigure $Rid -fill skyblue
+    }
+    method set_final {} {
+        set Type final
+        $Canvas itemconfigure $Rid -fill lightgreen
     }
     method select {} {
         if {[$App select [self object]]} {
