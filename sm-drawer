@@ -3,42 +3,128 @@
 package require TclOO
 package require Tk
 
-#### Setup canvas + widgets
+# TODO
+#
+# 1) draw transitions
+# 2) save/load
+# 3) metadata (class names + identifiers)
+# 4) hierarchical states
 
-canvas .c -background white
-button .q -text {Quit} -command exit
+# wrap canvas object
+oo::class create my_app {
+    variable Canvas StateIdx Selected Transitions States
+    set StateIdx 0
+    constructor {c} {
+        set Canvas $c
+        set StateIdx 0
+        set Selected {}
+        set Transitions {}
+        set States {}
 
-pack .c -side top -expand true -fill both
-pack .q -side bottom
+        canvas $c -background white
+        button .q -text {Quit} -command exit
+        label .l -text {Idle}
+        button .a -text {Add State} -command "[self object] switch_to_add_state_mode"
 
-bind .c <3> "handle_click %x %y"
-
-#### Globals
-
-set state_idx 0
-
-################################################################################
-
-oo::class create state {
-    variable Rectangle Text
-    constructor {x y id} {
-        set Rectangle [.c create rectangle $x $y [expr {$x + 50}] [expr {$y + 20}] -fill lightgrey]
-        set Text [.c create text [expr {$x + 5}] [expr {$y + 5}] -text "state$id" -anchor nw]
-        .c bind $Rectangle <B1-Motion> "[self object] move %x %y"
-        .c bind $Text <B1-Motion> "[self object] move %x %y"
+        pack .a -side top
+        pack $Canvas -expand true -fill both
+        pack .q .l -side bottom
     }
     destructor {
-        .c delete $Rectangle $Text
+        destroy $Canvas
     }
-    method move {new_x new_y} {
-        lassign [.c coords $Rectangle] old_x old_y
-        .c move $Rectangle [expr {$new_x - $old_x}] [expr {$new_y - $old_y}]
-        .c move $Text [expr {$new_x - $old_x}] [expr {$new_y - $old_y}]
+    method switch_to_add_state_mode {} {
+        bind $Canvas <Button-1> "[self object] add_state %x %y"
+        $Canvas configure -cursor crosshair
+        .l configure -text {Click to add new state...}
+    }
+    method add_state {x y} {
+        bind $Canvas <Button-1> {}
+        $Canvas configure -cursor left_ptr
+        .l configure -text {Idle}
+        incr StateIdx
+        lappend States [state new $Canvas [self object] $x $y "state$StateIdx"]
+    }
+    # first time just save which state was selected and update the
+    # status bar.  second time create a transition between them.
+    method select {obj} {
+        if {$Selected != {}} {
+            lappend Transitions [list $Selected $obj]
+            # deselect both states
+            $Selected select
+            $obj select
+            set Selected {}
+            .l configure -text {Idle}
+        } else {
+            set Selected $obj
+            .l configure -text {Select a second state...}
+        }
+    }
+    method deselect {obj} {
+        if {$Selected != {}} {
+            .l configure -text {Idle}
+            set Selected {}
+        }
+    }
+    method popup_menu {obj} {
+        if {[winfo exists .t]} {
+            destroy .t
+        }
+        tk::toplevel .t
+        wm transient .t .
+        wm overrideredirect .t true
+        wm attributes .t -type popup_menu
+        label .t.l -text "Menu: [$obj get_name]"
+        entry .t.e
+        .t.e insert 0 [$obj get_name]
+        button .t.r -text "Rename" -command "$obj rename {.t.e get}; destroy .t"
+        button .t.d -text "Delete" -command "$obj destroy; destroy .t"
+        button .t.c -text "Close" -command "destroy .t"
+        pack .t.l .t.e .t.r .t.d .t.c
     }
 }
 
-proc handle_click {x y} {
-    global state_idx
-    incr state_idx
-    state new $x $y $state_idx
+oo::class create state {
+    variable Canvas App Id Name Selected
+    constructor {c a x y name} {
+        set Canvas $c
+        set App $a
+        set Name $name
+        set Selected false
+        set Id [$Canvas create text $x $y -text $name -fill black -activefill red]
+        $Canvas bind $Id <Button-1> "[self object] select"
+        $Canvas bind $Id <B1-Motion> "[self object] move %x %y"
+        $Canvas bind $Id <3> "$App popup_menu [self object]"
+    }
+    destructor {
+        $Canvas delete $Id
+    }
+    method get_name {} {
+        return $Name
+    }
+    method move {x y} {
+        $Canvas moveto $Id $x $y
+    }
+    # new_name is a function, not a string
+    # TODO ask Alex about this
+    method rename {new_name} {
+        set Name [{*}$new_name]
+        $Canvas dchars $Id 0 end
+        $Canvas insert $Id end $Name
+    }
+    method select {} {
+        if {$Selected} {
+            set Selected false
+            $Canvas itemconfigure $Id -fill black -activefill red
+            $App deselect [self object]
+        } else {
+            set Selected true
+            $Canvas itemconfigure $Id -fill blue -activefill red
+            $App select [self object]
+        }
+    }
 }
+
+#### Setup canvas + widgets
+
+my_app new .c
