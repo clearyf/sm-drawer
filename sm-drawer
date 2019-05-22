@@ -5,6 +5,8 @@ package require Tk
 
 # TODO
 #
+# - bug in load/save/delete
+#
 # - initial + final state
 #
 # - hierarchical states
@@ -319,27 +321,37 @@ oo::class create my_app {
 
 oo::class create state {
     superclass notifier
-    variable Canvas App Name Selected Tid Rid
+    variable Canvas App Name Selected Tid Rid PointerOffset
     constructor {c a x y name} {
         next
         set Canvas $c
         set App $a
         set Name $name
         set Selected false
+        set PointerOffset [list 0 0]
         set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
         set Rid [$Canvas create rectangle [$Canvas bbox $Tid] -fill lightgrey]
         $Canvas lower $Rid $Tid
-        $Canvas bind $Tid <Button-1> "[self object] select"
+        $Canvas bind $Tid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
+        $Canvas bind $Rid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
         $Canvas bind $Tid <B1-Motion> "[self object] move %x %y"
-        $Canvas bind $Tid <3> "$App popup_menu [self object] %x %y"
-        $Canvas bind $Rid <Button-1> "[self object] select"
         $Canvas bind $Rid <B1-Motion> "[self object] move %x %y"
+        $Canvas bind $Tid <3> "$App popup_menu [self object] %x %y"
         $Canvas bind $Rid <3> "$App popup_menu [self object] %x %y"
     }
     destructor {
         $Canvas delete $Tid
         $Canvas delete $Rid
         next
+    }
+    # On ButtonPress save the location of the pointer so we have a
+    # basis for moving the state without it jumping all over the
+    # place.
+    method save_pointer_offset {x y} {
+        lassign [my get_entry_coords] nw_x nw_y
+        set PointerOffset [list [expr {$x - $nw_x}] [expr {$y - $nw_y}]]
+        # call next action
+        my select
     }
     method get_entry_coords {} {
         return [lrange [$Canvas bbox $Tid] 0 1]
@@ -357,12 +369,13 @@ oo::class create state {
     method get_name {} {
         return $Name
     }
-    # TODO fix this so the relative positions of the object & pointer
-    # stay the same
-    method move {x y} {
+    method move {new_x new_y} {
+        lassign $PointerOffset offset_x offset_y
+        set x [expr {$new_x - $offset_x}]
+        set y [expr {$new_y - $offset_y}]
         $Canvas moveto $Tid $x $y
         $Canvas moveto $Rid $x $y
-        my emit moved $x $y
+        my emit redrawn
     }
     method get_coords {} {
         $Canvas coords $Tid
@@ -401,12 +414,10 @@ oo::class create transition {
         set Dst $dst
         set Id {}
         my CreateLine
-        $Src connect moved [self object] move
-        $Dst connect moved [self object] move
         $Src connect destroyed [self object] state_destroyed
         $Dst connect destroyed [self object] state_destroyed
-        $Src connect redrawn [self object] move
-        $Dst connect redrawn [self object] move
+        $Src connect redrawn [self object] redraw
+        $Dst connect redrawn [self object] redraw
     }
     destructor {
         $Canvas delete $Id
@@ -422,7 +433,7 @@ oo::class create transition {
         set Id [$Canvas create line {*}[$Src get_exit_coords] {*}[$Dst get_entry_coords] -arrow last]
         $Canvas lower $Id
     }
-    method move {args} {
+    method redraw {args} {
         # TODO howto move line instead of replacing it?
         my CreateLine
     }
