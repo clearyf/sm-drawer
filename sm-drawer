@@ -5,9 +5,12 @@ package require Tk
 
 # TODO
 #
-# - bug in load/save/delete
+# - split transition connections into two lines
+# - save transition midpoint
+# - add event name to transitions
+# - add popup menu to transitions
 #
-# - initial + final state
+# - bug in load/save/delete
 #
 # - hierarchical states
 #
@@ -454,14 +457,16 @@ oo::class create state {
 
 oo::class create transition {
     superclass notifier
-    variable Canvas Src Dst Lid Cid
+    variable Canvas Src Dst MidPoint Lid1 Lid2 Cid
     constructor {canvas src dst} {
         next
         set Canvas $canvas
         set Src $src
         set Dst $dst
-        set Lid {}
+        set Lid1 {}
+        set Lid2 {}
         set Cid {}
+        set MidPoint [my GetMidPointCoords]
         my CreateLine
         $Src connect destroyed [self object] state_destroyed
         $Dst connect destroyed [self object] state_destroyed
@@ -469,30 +474,50 @@ oo::class create transition {
         $Dst connect redrawn [self object] redraw
     }
     destructor {
-        $Canvas delete $Lid
+        $Canvas delete $Lid1
+        $Canvas delete $Lid2
+        $Canvas delete $Cid
         next
     }
     method serialise {f} {
         puts $f "[$Src get_name]=[$Dst get_name]"
     }
     method CreateLine {} {
-        if {$Lid != {}} {
-            $Canvas delete $Lid
-            $Canvas delete $Cid
+        if {$Lid1 != {}} {
+            $Canvas delete $Lid1
+            $Canvas delete $Lid2
         }
-        set Lid [$Canvas create line [my GetLineCoords] -arrow last]
-        $Canvas lower $Lid
-        set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
-        $Canvas raise $Cid $Lid
+        set Lid1 [$Canvas create line [my GetLine1Coords]]
+        set Lid2 [$Canvas create line [my GetLine2Coords] -arrow last]
+        $Canvas lower $Lid1
+        $Canvas lower $Lid2
+        if {$Cid == {}} {
+            set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
+            $Canvas raise $Cid $Lid1
+            $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
+        }
+    }
+    method move_circle {x y} {
+        set MidPoint [list $x $y]
+        my CreateLine
+        $Canvas moveto $Cid {*}[lrange [my GetCircleCoords] 0 1]
     }
     method GetLineCoords {} {
         return [list {*}[$Src get_exit_coords] {*}[$Dst get_entry_coords]]
     }
-    method GetCircleCoords {} {
+    method GetLine1Coords {} {
+        return [list {*}[$Src get_exit_coords] {*}$MidPoint]
+    }
+    method GetLine2Coords {} {
+        return [list {*}$MidPoint {*}[$Dst get_entry_coords]]
+    }
+    method GetMidPointCoords {} {
         lassign [my GetLineCoords] lsx lsy lex ley
-        set mx [expr {$lsx + ($lex - $lsx) / 2}]
-        set my [expr {$lsy + ($ley - $lsy) / 2}]
-        set r 5
+        return [list [expr {$lsx + ($lex - $lsx) / 2}] [expr {$lsy + ($ley - $lsy) / 2}]]
+    }
+    method GetCircleCoords {} {
+        lassign $MidPoint mx my
+        set r 3
         return [list [expr {$mx - $r}] [expr {$my - $r}] [expr {$mx + $r}] [expr {$my + $r}]]
     }
     method redraw {args} {
