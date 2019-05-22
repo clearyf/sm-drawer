@@ -5,13 +5,11 @@ package require Tk
 
 # TODO
 #
-# - ensure each state name is unique
 # - initial + final state
-# - class name
-# - draw boxes around states
 #
 # - hierarchical states
 #
+# - class name
 # - mark parallel states
 #
 # - testing (esp notifier to start with)
@@ -31,14 +29,19 @@ oo::class create notifier {
         if {[dict exists $Listeners $name]} {
             set idx [lsearch -exact [dict get $Listeners $name] [list $dst {*}$args]]
             if {$idx != -1} {
-                # already present, break loop
-                return
+                # already present, break loop.  when a connection is
+                # made a second connection is made to make sure that
+                # we disconnect the signal if the destination object
+                # is destroyed.
+                return false
             }
         }
         dict lappend Listeners $name [list $dst {*}$args]
         # monitor destroyed signal from dst, so we can disconnect it
-        # when it is destroyed.
+        # when it is destroyed and don't call methods on non-existent
+        # objects.
         $dst connect destroyed [self object] disconnect_obj $dst
+        return true
     }
     method disconnect {name dst args} {
         if {[dict exists $Listeners $name]} {
@@ -46,8 +49,10 @@ oo::class create notifier {
             set idx [lsearch -exact $entries [list $dst {*}$args]]
             if {$idx != -1} {
                 dict set Listeners $name [lreplace $entries $idx $idx]
+                return true
             }
         }
+        return false
     }
     # this loops through all connections and disconnects just one
     # object
@@ -94,12 +99,12 @@ oo::class create my_app {
         set States {}
 
         canvas $c -background white
-        button .save -text {Save} -command "[self object] save"
-        button .load -text {Load} -command "[self object] load"
+        button .save -text {Save} -command [list [self object] save]
+        button .load -text {Load} -command [list [self object] load]
         button .quit -text {Quit} -command exit
         label .status_bar -text {Idle}
-        button .add_state -text {Add State} -command "[self object] switch_to_add_state_mode"
-        button .add_trans -text {Add Transition} -command "[self object] switch_to_add_transition_mode"
+        button .add_state -text {Add State} -command [list [self object] switch_to_add_state_mode]
+        button .add_trans -text {Add Transition} -command [list [self object] switch_to_add_transition_mode]
 
         pack .add_state .add_trans -side top
         pack $Canvas -expand true -fill both
@@ -114,7 +119,7 @@ oo::class create my_app {
         .status_bar configure -text $text
     }
     method save {} {
-        set f [open "saved_data.ini" "w"]
+        set f [open {saved_data.ini} {w}]
         # first save the states
         foreach state $States {
             $state serialise $f
@@ -126,7 +131,7 @@ oo::class create my_app {
         close $f
     }
     method load {} {
-        if {$CurState != "idle"} {
+        if {$CurState != {idle}} {
             return
         }
         while {[llength $States] > 0} {
@@ -134,7 +139,7 @@ oo::class create my_app {
         }
         # destroying all states destroys all transitions too
 
-        set f [open "saved_data.ini" "r"]
+        set f [open {saved_data.ini} {r}]
         set got_transitions false
         set name {}
         set x {}
@@ -201,7 +206,7 @@ oo::class create my_app {
         throw STATE_NOT_FOUND "No state called $name found!"
     }
     method switch_to_add_state_mode {} {
-        if {$CurState != "idle"} {
+        if {$CurState != {idle}} {
             return
         }
         set CurState addState
@@ -210,7 +215,7 @@ oo::class create my_app {
         my set_status_bar {Click to add new state...}
     }
     method add_state {x y} {
-        if {$CurState != "addState"} {
+        if {$CurState != {addState}} {
             return
         }
         set CurState idle
@@ -237,14 +242,14 @@ oo::class create my_app {
         set States [lreplace $States $idx $idx]
     }
     method switch_to_add_transition_mode {} {
-        if {$CurState != "idle"} {
+        if {$CurState != {idle}} {
             return
         }
         my set_status_bar {Select the first state...}
         set CurState addTransition
     }
     method select {obj} {
-        if {$CurState != "addTransition"} {
+        if {$CurState != {addTransition}} {
             return false
         }
         if {$Selected == {}} {
@@ -273,7 +278,25 @@ oo::class create my_app {
         set idx [lsearch -exact $Transitions $transition]
         set Transitions [lreplace $Transitions $idx $idx]
     }
-    method popup_menu {obj} {
+    method popup_destroy_state {obj} {
+        set answer [tk_messageBox -message "Delete [$obj get_name]?" \
+                        -icon question -type yesno]
+        switch -- $answer {
+            yes {$obj destroy}
+        }
+    }
+    method popup_rename_state {obj} {
+        set new_name [.popup.e get]
+        foreach state $States {
+            if {$obj != $state && $new_name == [$state get_name]} {
+                tk_messageBox -message "There is already a state called [$obj get_name]!" \
+                        -icon error -type ok
+                return
+            }
+        }
+        $obj rename $new_name
+    }
+    method popup_menu {obj x y} {
         if {[winfo exists .popup]} {
             destroy .popup
         }
@@ -281,33 +304,48 @@ oo::class create my_app {
         wm transient .popup .
         wm overrideredirect .popup true
         wm attributes .popup -type popup_menu
+        set parent_geo [winfo geometry .]
+        regexp {[0-9]+x[0-9]+\+([0-9]+)\+([0-9]+)} $parent_geo parent_geo parent_x parent_y
+        wm geometry .popup "+[expr {$x + $parent_x}]+[expr {$y + $parent_y}]"
         label .popup.l -text "Menu: [$obj get_name]"
         entry .popup.e
         .popup.e insert 0 [$obj get_name]
-        button .popup.r -text "Rename" -command "$obj rename {.popup.e get}; destroy .popup"
-        button .popup.d -text "Delete" -command "$obj destroy; destroy .popup"
-        button .popup.c -text "Close" -command "destroy .popup"
+        button .popup.r -text {Rename} -command [list [self object] popup_rename_state $obj]
+        button .popup.d -text {Delete} -command [list [self object] popup_destroy_state $obj]
+        button .popup.c -text {Close} -command [list destroy .popup]
         pack .popup.l .popup.e .popup.r .popup.d .popup.c
     }
 }
 
 oo::class create state {
     superclass notifier
-    variable Canvas App Id Name Selected
+    variable Canvas App Name Selected Tid Rid
     constructor {c a x y name} {
         next
         set Canvas $c
         set App $a
         set Name $name
         set Selected false
-        set Id [$Canvas create text $x $y -text $name -fill black -activefill red]
-        $Canvas bind $Id <Button-1> "[self object] select"
-        $Canvas bind $Id <B1-Motion> "[self object] move %x %y"
-        $Canvas bind $Id <3> "$App popup_menu [self object]"
+        set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
+        set Rid [$Canvas create rectangle [$Canvas bbox $Tid] -fill lightgrey]
+        $Canvas lower $Rid $Tid
+        $Canvas bind $Tid <Button-1> "[self object] select"
+        $Canvas bind $Tid <B1-Motion> "[self object] move %x %y"
+        $Canvas bind $Tid <3> "$App popup_menu [self object] %x %y"
+        $Canvas bind $Rid <Button-1> "[self object] select"
+        $Canvas bind $Rid <B1-Motion> "[self object] move %x %y"
+        $Canvas bind $Rid <3> "$App popup_menu [self object] %x %y"
     }
     destructor {
-        $Canvas delete $Id
+        $Canvas delete $Tid
+        $Canvas delete $Rid
         next
+    }
+    method get_entry_coords {} {
+        return [lrange [$Canvas bbox $Tid] 0 1]
+    }
+    method get_exit_coords {} {
+        return [lrange [$Canvas bbox $Tid] 2 3]
     }
     method serialise {f} {
         puts $f "\[State\]"
@@ -319,30 +357,36 @@ oo::class create state {
     method get_name {} {
         return $Name
     }
+    # TODO fix this so the relative positions of the object & pointer
+    # stay the same
     method move {x y} {
-        $Canvas moveto $Id $x $y
+        $Canvas moveto $Tid $x $y
+        $Canvas moveto $Rid $x $y
         my emit moved $x $y
     }
     method get_coords {} {
-        $Canvas coords $Id
+        $Canvas coords $Tid
     }
-    # new_name is a function, not a string
-    # TODO ask Alex about this
     method rename {new_name} {
-        set Name [{*}$new_name]
-        $Canvas dchars $Id 0 end
-        $Canvas insert $Id end $Name
+        set Name $new_name
+        $Canvas dchars $Tid 0 end
+        $Canvas insert $Tid end $Name
+        $Canvas delete $Rid
+        # repaint canvas
+        set Rid [$Canvas create rectangle [$Canvas bbox $Tid] -fill lightgrey]
+        $Canvas lower $Rid $Tid
+        my emit redrawn
     }
     method select {} {
         if {[$App select [self object]]} {
             # select is ok now
             set Selected true
-            $Canvas itemconfigure $Id -fill blue -activefill red
+            $Canvas itemconfigure $Tid -fill blue -activefill red
         }
     }
     method deselect {} {
         set Selected false
-        $Canvas itemconfigure $Id -fill black -activefill red
+        $Canvas itemconfigure $Tid -fill black -activefill red
         $App deselect [self object]
     }
 }
@@ -361,6 +405,8 @@ oo::class create transition {
         $Dst connect moved [self object] move
         $Src connect destroyed [self object] state_destroyed
         $Dst connect destroyed [self object] state_destroyed
+        $Src connect redrawn [self object] move
+        $Dst connect redrawn [self object] move
     }
     destructor {
         $Canvas delete $Id
@@ -373,9 +419,10 @@ oo::class create transition {
         if {$Id != {}} {
             $Canvas delete $Id
         }
-        set Id [$Canvas create line {*}[$Src get_coords] {*}[$Dst get_coords] -arrow last]
+        set Id [$Canvas create line {*}[$Src get_exit_coords] {*}[$Dst get_entry_coords] -arrow last]
+        $Canvas lower $Id
     }
-    method move {x y} {
+    method move {args} {
         # TODO howto move line instead of replacing it?
         my CreateLine
     }
