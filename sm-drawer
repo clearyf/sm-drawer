@@ -11,7 +11,41 @@ package require Tk
 # - escape cancels add state/transition
 # - support multiple points on transitions
 #
-# - bug in load/save/delete
+# - fix a bug in load/save/delete
+
+# Creating state: state1 -> ::oo::Obj36
+# Creating state: state2 -> ::oo::Obj37
+# Creating state: state3 -> ::oo::Obj38
+# Creating transition: state1 to state2 -> ::oo::Obj39
+# Creating transition: state2 to state3 -> ::oo::Obj40
+# Destroying state: state2 -> ::oo::Obj37
+# Destroying transition: ::oo::Obj39
+
+# invalid command name "::oo::Obj39"
+# invalid command name "::oo::Obj39"
+#     while executing
+# "{*}$listener {*}$args"
+#     (class "::notifier" method "emit" line 4)
+#     invoked from within
+# "my emit destroyed"
+#     (class "::notifier" destructor line 2)
+#     invoked from within
+# "next"
+#     (class "::state" destructor line 5)
+#     invoked from within
+# "$obj destroy"
+#     (class "::my_app" method "popup_destroy_state" line 4)
+#     invoked from within
+# "::oo::Obj25 popup_destroy_state ::oo::Obj37"
+#     invoked from within
+# ".popup.d invoke"
+#     ("uplevel" body line 1)
+#     invoked from within
+# "uplevel #0 [list $w invoke]"
+#     (procedure "tk::ButtonUp" line 22)
+#     invoked from within
+# "tk::ButtonUp .popup.d"
+#     (command bound to event)
 
 # next major feature
 #
@@ -348,6 +382,7 @@ oo::class create state {
     superclass notifier
     variable Canvas App Name Selected Tid Rid PointerOffset Type
     constructor {c a x y name} {
+        puts "Creating state: $name -> [self object]"
         next
         set Canvas $c
         set App $a
@@ -366,6 +401,7 @@ oo::class create state {
         $Canvas bind $Rid <3> "$App popup_menu [self object] %x %y"
     }
     destructor {
+        puts "Destroying state: $Name -> [self object]"
         $Canvas delete $Tid
         $Canvas delete $Rid
         next
@@ -457,6 +493,7 @@ oo::class create transition {
     superclass notifier
     variable Canvas Src Dst Event MidPoint Lid Cid Tid
     constructor {canvas src dst event} {
+        puts "Creating transition: [$src get_name] to [$dst get_name] -> [self object]"
         next
         set Canvas $canvas
         set Src $src
@@ -467,12 +504,13 @@ oo::class create transition {
         set Tid {}
         set MidPoint [my GetMidPointCoords]
         my CreateLine
-        $Src connect destroyed [self object] state_destroyed
-        $Dst connect destroyed [self object] state_destroyed
+        $Src connect destroyed [self object] destroy
+        $Dst connect destroyed [self object] destroy
         $Src connect redrawn [self object] redraw
         $Dst connect redrawn [self object] redraw
     }
     destructor {
+        puts "Destroying transition: [self object]"
         next
         $Canvas delete $Lid
         $Canvas delete $Cid
@@ -532,9 +570,6 @@ oo::class create transition {
     method redraw {args} {
         # TODO howto move line instead of replacing it?
         my CreateLine
-    }
-    method state_destroyed {} {
-        my destroy
     }
 }
 
