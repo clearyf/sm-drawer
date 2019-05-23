@@ -7,8 +7,10 @@ package require Tk
 
 # TODO high priority
 #
-# - constraint elements to visible canvas
-# - implement scrolling of canvas
+# - constraint elements to visible canvas (important for hierarchical states)
+# - implement scrolling of canvas (scrollbar tracks canvas dims)
+# - group UI buttons (WIP)
+# - pad rectangles around states
 # - ?
 #
 # TODO next major feature
@@ -247,17 +249,27 @@ oo::class create my_app {
         set Transitions {}
         set States {}
 
-        canvas $c -background white
-        button .save -text {Save} -command [list [self object] save]
-        button .load -text {Load} -command [list [self object] load]
-        button .quit -text {Quit} -command exit
-        label .status_bar -text {Idle}
-        button .add_state -text {Add State} -command [list [self object] switch_to_add_state_mode]
-        button .add_trans -text {Add Transition} -command [list [self object] switch_to_add_transition_mode]
+        canvas $c -background white -xscrollcommand {.scroll_b set} -yscrollcommand {.scroll_l set}
+        frame .top
+        frame .bot
+        button .top.save -text {Save} -command [list [self object] save]
+        button .top.load -text {Load} -command [list [self object] load]
+        button .top.quit -text {Quit} -command exit
+        label .bot.status_bar -text {Idle}
+        button .top.add_state -text {Add State} -command [list [self object] switch_to_add_state_mode]
+        button .top.add_trans -text {Add Transition} -command [list [self object] switch_to_add_transition_mode]
+        scrollbar .scroll_l -command {.c yview}
+        scrollbar .scroll_b -command {.c xview} -orient horizontal
 
-        pack .add_state .add_trans -side top
+        pack .bot -side bottom
+        pack .top -side top
+        pack .top.add_state .top.add_trans -side left
+        pack .scroll_l -side right -fill y
         pack $Canvas -expand true -fill both
-        pack .quit .status_bar .load .save -side bottom
+        pack .scroll_b -fill x
+        pack .bot.status_bar -fill x -side top
+        pack .top.load .top.save -side left
+        pack .top.quit -side right
 
         bind . <Escape> "[self object] cancel_current_op"
     }
@@ -267,7 +279,7 @@ oo::class create my_app {
         destroy $Canvas
     }
     method set_status_bar {text} {
-        .status_bar configure -text $text
+        .bot.status_bar configure -text $text
     }
     method cancel_current_op {} {
         $Canvas configure -cursor left_ptr
@@ -536,7 +548,7 @@ oo::class create state {
         set Selected false
         set PointerOffset [list 0 0]
         set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
-        set Rid [$Canvas create rectangle [$Canvas bbox $Tid]]
+        set Rid [$Canvas create rectangle [$Canvas bbox $Tid] -fill lightgrey]
         my set_normal
         $Canvas lower $Rid $Tid
         $Canvas bind $Tid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
@@ -708,9 +720,13 @@ oo::class create transition {
     method get_name {} {
         return $Event
     }
+    method GetCircleRadius {} {
+        return 3
+    }
     method GetTextCoords {} {
         lassign $MidPoint x y
-        return [list [expr {$x + 3}] [expr {$y + 3}]]
+        set r [my GetCircleRadius]
+        return [list [expr {$x + $r}] [expr {$y + $r}]]
     }
     method GetLineCoords {} {
         return [list {*}[$Src get_exit_coords] {*}[$Dst get_entry_coords]]
@@ -728,7 +744,7 @@ oo::class create transition {
     }
     method GetCircleCoords {} {
         lassign $MidPoint mx my
-        set r 3
+        set r [my GetCircleRadius]
         return [list [expr {$mx - $r}] [expr {$my - $r}] [expr {$mx + $r}] [expr {$my + $r}]]
     }
     method redraw {args} {
