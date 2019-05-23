@@ -5,8 +5,7 @@ package require Tk
 
 # TODO
 #
-# - split transition connections into two lines
-# - save transition midpoint
+# - support multiple points on transitions
 # - add event name to transitions
 # - add popup menu to transitions
 #
@@ -125,15 +124,48 @@ oo::class create my_app {
     }
     method save {} {
         set f [open {saved_data.ini} {w}]
-        # first save the states
         foreach state $States {
             $state serialise $f
         }
-        puts $f "\[Transitions\]"
         foreach transition $Transitions {
             $transition serialise $f
         }
         close $f
+    }
+    method CreateObject {mode d} {
+        switch -exact -- $mode {
+            State {
+                if {[dict exists $d name]
+                    && [dict exists $d type]
+                    && [dict exists $d position]} {
+                    set new_state [state new $Canvas [self object] {*}[dict get $d position] [dict get $d name]]
+                    lappend States $new_state
+                    $new_state connect destroyed [self object] state_destroyed $new_state
+                    $new_state set_type [dict get $d type]
+                } else {
+                    puts "Don't have enough information to construct a state: $d"
+                }
+            }
+            Transition {
+                if {[dict exists $d from]
+                    && [dict exists $d to]
+                    && [dict exists $d points]} {
+
+                    set src [my get_state [dict get $d from]]
+                    set dst [my get_state [dict get $d to]]
+
+                    set new_transition [transition new $Canvas $src $dst]
+                    lappend Transitions $new_transition
+                    $new_transition set_points [dict get $d points]
+                    $new_transition connect destroyed [self object] transition_destroyed $new_transition
+                } else {
+                    puts "Don't have enough information to construct a transition: $d"
+                }
+            }
+            default {
+                puts "Don't know what to do with a $mode with $d"
+            }
+        }
     }
     method load {} {
         if {$CurState != {idle}} {
@@ -145,68 +177,27 @@ oo::class create my_app {
         # destroying all states destroys all transitions too
 
         set f [open {saved_data.ini} {r}]
-        set got_transitions false
-        set name {}
-        set x {}
-        set y {}
-        set type {}
+        set d [dict create]
+        set mode {}
         while {[gets $f line] >= 0} {
             switch -regexp -matchvar value -- $line {
-                {\[Transitions\]} {
-                    # flush existing state if any
-                    if {$name != {} && $x != {} && $y != {} && $type != {}} {
-                        set new_state [state new $Canvas [self object] $x $y $name]
-                        lappend States $new_state
-                        $new_state connect destroyed [self object] state_destroyed $new_state
-                        $new_state set_type $type
+                {\[(.*)\]} {
+                    if {$mode != {}} {
+                        my CreateObject $mode $d
                     }
-                    break
+                    set mode [lindex $value 1]
+                    set d [dict create]
                 }
-                {\[State\]} {
-                    # flush existing state if any
-                    if {$name != {} && $x != {} && $y != {} && $type != {}} {
-                        set new_state [state new $Canvas [self object] $x $y $name]
-                        lappend States $new_state
-                        $new_state connect destroyed [self object] state_destroyed $new_state
-                        $new_state set_type $type
-                        set name {}
-                        set x {}
-                        set y {}
-                        set type {}
-                    }
-                }
-                {name=(.*)}  {
-                    set name [lindex $value 1]
-                }
-                {x=(.*)} {
-                    set x [lindex $value 1]
-                }
-                {y=(.*)} {
-                    set y [lindex $value 1]
-                }
-                {type=(.*)} {
-                    set type [lindex $value 1]
+                {([^=]+)=(.+)}  {
+                    dict set d [lindex $value 1] [lindex $value 2]
                 }
                 default {
                     puts "Error parsing state: $line"
                 }
             }
         }
-
-        # Now read the transitions
-        while {[gets $f line] >= 0} {
-            if {[regexp {(.*)=(.*)} $line line src_name dst_name]} {
-                # lookup src_name & dst_name
-                set src [my get_state $src_name]
-                set dst [my get_state $dst_name]
-
-                set new_transition [transition new $Canvas $src $dst]
-                lappend Transitions $new_transition
-                $new_transition connect destroyed [self object] transition_destroyed $new_transition
-            } else {
-                puts "Error parsing transition: $line"
-            }
-        }
+        # eof, create very last object
+        my CreateObject $mode $d
         close $f
     }
     method get_state {name} {
@@ -389,9 +380,7 @@ oo::class create state {
         puts $f "\[State\]"
         puts $f "name=[my get_name]"
         puts $f "type=[my get_type]"
-        lassign [my get_coords] x y
-        puts $f "x=$x"
-        puts $f "y=$y"
+        puts $f "position=[my get_coords]"
     }
     method get_name {} {
         return $Name
@@ -480,7 +469,10 @@ oo::class create transition {
         next
     }
     method serialise {f} {
-        puts $f "[$Src get_name]=[$Dst get_name]"
+        puts $f "\[Transition\]"
+        puts $f "from=[$Src get_name]"
+        puts $f "to=[$Dst get_name]"
+        puts $f "points=$MidPoint"
     }
     method CreateLine {} {
         if {$Lid1 != {}} {
@@ -496,6 +488,11 @@ oo::class create transition {
             $Canvas raise $Cid $Lid1
             $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
         }
+    }
+    method set_points {points} {
+        set MidPoint $points
+        my CreateLine
+        $Canvas moveto $Cid {*}[lrange [my GetCircleCoords] 0 1]
     }
     method move_circle {x y} {
         set MidPoint [list $x $y]
