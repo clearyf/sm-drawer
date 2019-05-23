@@ -63,10 +63,14 @@ oo::class create notifier {
     # one here "destroy_later" which will schedule destruction later
     # when the event loop is idle.
     #
-    # An alternative would be to match in the connect method on
-    # destroyed -> destroy, but that would not catch methods that
-    # indirectly call destroy.  Best thing is to trigger an error in
-    # these cases so it gets caught straightaway.
+    # Alternatives are tricky if automatic disconnection on object
+    # destruction is wanted.  Basically if a signal triggers a destroy
+    # then ALL disconnections must be completed before the object is
+    # destroyed, and is greatly complicated by the fact that the
+    # Listeners may be modified while it is being iterated through,
+    # but the foreach iterating over the list will not be modified.
+    # By far the most straightforward solution is to schedule each
+    # item for deletion one at a time in the event loop.
     method destroy_later {} {
         # Make sure to only call destroy once on this object.
         if {$DestroyPending == {}} {
