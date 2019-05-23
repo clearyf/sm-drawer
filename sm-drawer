@@ -186,44 +186,47 @@ oo::class create test_notifier {
     }
 }
 
+proc test_assert_true {body text} {
+    if {![uplevel 1 $body]} {
+        error "Expected: $text"
+    }
+}
+
+proc test_assert_false {body text} {
+    if {[uplevel 1 $body]} {
+        error "Expected: $text"
+    }
+}
+
 # test is fairly straightforward, first create the two instances
 set foo [test_notifier new]
 set bar [test_notifier new]
 $bar beep
 # nothing should have been heard yet from bar by foo
-if {[$foo heard_beep]} {
-    error "Beep already heard"
-}
+test_assert_false {$foo heard_beep} "Beep not heard"
+
 # foo should monitor the beep from foo
 $bar connect beep $foo somebody_beeped
 # this time it should be heard
 $bar beep
-if {![$foo heard_beep]} {
-    error "Beep wasn't heard"
-}
+test_assert_true {$foo heard_beep} "Beep was heard"
+
 # test that this gives us an error
-if {![catch {$foo connect destroyed $bar destroy}]} {
-    error "connect destroyed -> destroy should be an error!"
-}
+test_assert_true {catch {$foo connect destroyed $bar destroy}} "connect destroyed -> destroy is an error!"
+
 # test add destroy_later for tearing down networks of notifiers
 $foo connect destroyed $bar destroy_later
-if {[$bar get_destroy_pending]} {
-    error "Test object is already pending deletion!"
-}
+test_assert_false {$bar get_destroy_pending} "deletion of object is not pending"
+
 $foo destroy
 # bar should only get destroyed when the event loop is entered
-if {![info object isa object $bar]} {
-    error "Test object was unexpectedly destroyed!"
-}
-if {![$bar get_destroy_pending]} {
-    error "Test object is not pending deletion as expected!"
-}
+test_assert_true {info object isa object $bar} "object is still alive"
+test_assert_true {$bar get_destroy_pending} "deletion of object is pending"
+
 # enter event loop to process waiting destroy_later event
 update
 # bar should now be destroyed
-if {[info object isa object $bar]} {
-    error "Test object is unexpectedly still alive!"
-}
+test_assert_false {info object isa object $bar} "object is destroyed"
 # end of test cases
 
 
