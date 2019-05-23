@@ -5,17 +5,15 @@ package require Tk
 
 # Note that all unit tests are run when the program starts.
 
-# TODO
+# TODO high priority
 #
-# high priority
+# - ?
 #
-# ?
-#
-# next major feature
+# TODO next major feature
 #
 # - hierarchical states
 #
-# nice to have
+# TODO nice to have
 #
 # - support multiple points on transitions
 # - class name (probably not required)
