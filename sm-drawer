@@ -3,50 +3,15 @@
 package require TclOO
 package require Tk
 
+# Note that all unit tests are run when the program starts.
+
 # TODO
 #
 # high priority
 #
-# - add popup menu to transitions (rename event, delete)
 # - escape cancels add state/transition
 # - support multiple points on transitions
 #
-# - fix a bug in load/save/delete
-
-# Creating state: state1 -> ::oo::Obj36
-# Creating state: state2 -> ::oo::Obj37
-# Creating state: state3 -> ::oo::Obj38
-# Creating transition: state1 to state2 -> ::oo::Obj39
-# Creating transition: state2 to state3 -> ::oo::Obj40
-# Destroying state: state2 -> ::oo::Obj37
-# Destroying transition: ::oo::Obj39
-
-# invalid command name "::oo::Obj39"
-# invalid command name "::oo::Obj39"
-#     while executing
-# "{*}$listener {*}$args"
-#     (class "::notifier" method "emit" line 4)
-#     invoked from within
-# "my emit destroyed"
-#     (class "::notifier" destructor line 2)
-#     invoked from within
-# "next"
-#     (class "::state" destructor line 5)
-#     invoked from within
-# "$obj destroy"
-#     (class "::my_app" method "popup_destroy_state" line 4)
-#     invoked from within
-# "::oo::Obj25 popup_destroy_state ::oo::Obj37"
-#     invoked from within
-# ".popup.d invoke"
-#     ("uplevel" body line 1)
-#     invoked from within
-# "uplevel #0 [list $w invoke]"
-#     (procedure "tk::ButtonUp" line 22)
-#     invoked from within
-# "tk::ButtonUp .popup.d"
-#     (command bound to event)
-
 # next major feature
 #
 # - hierarchical states
@@ -55,23 +20,70 @@ package require Tk
 #
 # - class name (probably not required)
 # - mark parallel states
-#
-# required at some stage
-#
-# - testing (esp notifier to start with)
+
+
+
+# some tracing/logging infrastructure
+proc enter {mesg} {
+    # puts "ENTER: $mesg"
+}
+
+proc leave {mesg} {
+    # puts "LEAVE: $mesg"
+}
 
 
 
 # notifier class ala QObject signals/slots
 oo::class create notifier {
-    variable Listeners
+    variable Listeners DestroyPending
     constructor {} {
+        enter "[self object] new"
         set Listeners [dict create]
+        set DestroyPending {}
+        leave "[self object] new"
     }
     destructor {
+        enter "[self object] destroy"
+        if {$DestroyPending != {}} {
+            # this could be the sign of a mistake, as if an object is
+            # pending deletion then direct destroy is probably a
+            # mistake.
+            # TODO check "after info $DestroyPending"?
+            after cancel $DestroyPending
+        }
         my emit destroyed
+        leave "[self object] destroy"
+    }
+    # gotcha here with notifications is if the "destroyed" signal is
+    # used to destroy another object eg:
+    #
+    # $obj1 connect destroyed $obj2 destroy
+    #
+    # then the list of objects is invalidated during iteration!
+    # Solution is if an object should be destroyed when another one is
+    # destroyed then the method called to destroy the object is this
+    # one here "destroy_later" which will schedule destruction later
+    # when the event loop is idle.
+    #
+    # An alternative would be to match in the connect method on
+    # destroyed -> destroy, but that would not catch methods that
+    # indirectly call destroy.  Best thing is to trigger an error in
+    # these cases so it gets caught straightaway.
+    method destroy_later {} {
+        # Make sure to only call destroy once on this object.
+        if {$DestroyPending == {}} {
+            set DestroyPending [after idle [self object] destroy]
+        }
+    }
+    method get_connections {} {
+        return $Listeners
     }
     method connect {name dst args} {
+        enter "[self object] connect $name $dst $args"
+        if {$name == {destroyed} && $args == {destroy}} {
+            error "Cannot connect destroyed to destroy, use destroy_later!"
+        }
         if {[dict exists $Listeners $name]} {
             set idx [lsearch -exact [dict get $Listeners $name] [list $dst {*}$args]]
             if {$idx != -1} {
@@ -79,6 +91,7 @@ oo::class create notifier {
                 # made a second connection is made to make sure that
                 # we disconnect the signal if the destination object
                 # is destroyed.
+                leave "[self object] connect $name $dst $args -> false"
                 return false
             }
         }
@@ -87,22 +100,27 @@ oo::class create notifier {
         # when it is destroyed and don't call methods on non-existent
         # objects.
         $dst connect destroyed [self object] disconnect_obj $dst
+        leave "[self object] connect $name $dst $args -> true"
         return true
     }
     method disconnect {name dst args} {
+        enter "[self object] disconnect $name $dst $args"
         if {[dict exists $Listeners $name]} {
             set entries [dict get $Listeners $name]
             set idx [lsearch -exact $entries [list $dst {*}$args]]
             if {$idx != -1} {
                 dict set Listeners $name [lreplace $entries $idx $idx]
+                leave "[self object] disconnect $name $dst $args -> true"
                 return true
             }
         }
+        leave "[self object] disconnect $name $dst $args -> false"
         return false
     }
     # this loops through all connections and disconnects just one
     # object
     method disconnect_obj {dst} {
+        enter "[self object] disconnect_obj $dst -> $Listeners"
         dict for {k v} $Listeners {
             set entries [dict get $Listeners $k]
             set indices {}
@@ -111,27 +129,88 @@ oo::class create notifier {
                     lappend indices $i
                 }
             }
-            foreach index $indices {
+            # remove element in reverse order as otherwise the later
+            # indices become invalid
+            foreach index [lreverse $indices] {
                 set entries [lreplace $entries $index $index]
             }
             dict set Listeners $k $entries
         }
+        leave "[self object] disconnect_obj $dst -> $Listeners"
     }
     method emit {name args} {
+        enter "[self object] emit $name $args"
         if {[dict exists $Listeners $name]} {
             foreach listener [dict get $Listeners $name] {
                 {*}$listener {*}$args
             }
         }
+        leave "[self object] emit $name $args"
     }
 }
 
-# some tests for notifier
-# TODO
+
+
+# test class to test various bits of notifier functionality
+oo::class create test_notifier {
+    superclass notifier
+    variable Heard
+    constructor {} {
+        set Heard false
+        next
+    }
+    destructor {
+        next
+    }
+    method beep {} {
+        my emit beep
+    }
+    method listen_to {obj} {
+    }
+    method somebody_beeped {} {
+        set Heard true
+    }
+    method heard_beep {} {
+        return $Heard
+    }
+}
+
+# test is fairly straightforward, first create the two instances
+set foo [test_notifier new]
+set bar [test_notifier new]
+$bar beep
+# nothing should have been heard yet from bar by foo
+if {[$foo heard_beep]} {
+    error "Beep already heard"
+}
+# foo should monitor the beep from foo
+$bar connect beep $foo somebody_beeped
+# this time it should be heard
+$bar beep
+if {![$foo heard_beep]} {
+    error "Beep wasn't heard"
+}
+# test that this gives us an error
+if {![catch {$foo connect destroyed $bar destroy}]} {
+    error "connect destroyed -> destroy should be an error!"
+}
+# test add destroy_later for tearing down networks of notifiers
+$foo connect destroyed $bar destroy_later
+$foo destroy
+# bar should only get destroyed when the event loop is entered
+if {![info object isa object $bar]} {
+    error "Test object was unexpectedly destroyed!"
+}
+# enter event loop to process waiting destroy_later event
+update
+# bar should now be destroyed
+if {[info object isa object $bar]} {
+    error "Test object is unexpectedly still alive!"
+}
+# end of test cases
 
 
 
-# wrap canvas object
 oo::class create my_app {
     superclass notifier
     variable Canvas StateIdx Selected Transitions States CurState
@@ -197,7 +276,7 @@ oo::class create my_app {
                     set src [my get_state [dict get $d from]]
                     set dst [my get_state [dict get $d to]]
 
-                    set new_transition [transition new $Canvas $src $dst [dict get $d event]]
+                    set new_transition [transition new $Canvas [self object] $src $dst [dict get $d event]]
                     lappend Transitions $new_transition
                     $new_transition set_points [dict get $d points]
                     $new_transition connect destroyed [self object] transition_destroyed $new_transition
@@ -303,7 +382,7 @@ oo::class create my_app {
             my set_status_bar {Select the second state...}
             return true
         } else {
-            set new_transition [transition new $Canvas $Selected $obj "foobar"]
+            set new_transition [transition new $Canvas [self object] $Selected $obj "foobar"]
             lappend Transitions $new_transition
             $new_transition connect destroyed [self object] transition_destroyed $new_transition
             $Selected deselect
@@ -323,7 +402,7 @@ oo::class create my_app {
         set idx [lsearch -exact $Transitions $transition]
         set Transitions [lreplace $Transitions $idx $idx]
     }
-    method popup_destroy_state {obj} {
+    method popup_destroy {obj} {
         set answer [tk_messageBox -message "Delete [$obj get_name]?" \
                         -icon question -type yesno]
         switch -- $answer {
@@ -339,6 +418,7 @@ oo::class create my_app {
                 return
             }
         }
+        .popup.l configure -text "Menu: $new_name"
         $obj rename $new_name
     }
     method popup_state_menu {obj x y} {
@@ -361,9 +441,33 @@ oo::class create my_app {
         button .popup.i -text {Set Initial} -command [list [self object] set_state_type $obj initial]
         button .popup.n -text {Set Normal} -command [list [self object] set_state_type $obj normal]
         button .popup.f -text {Set Final} -command [list [self object] set_state_type $obj final]
-        button .popup.d -text {Delete} -command [list [self object] popup_destroy_state $obj]
+        button .popup.d -text {Delete} -command [list [self object] popup_destroy $obj]
         button .popup.c -text {Close} -command [list destroy .popup]
         pack .popup.l .popup.t .popup.e .popup.r .popup.i .popup.f .popup.n .popup.d .popup.c -fill x
+    }
+    method popup_transition_menu {obj x y} {
+        if {[winfo exists .popup]} {
+            destroy .popup
+        }
+        tk::toplevel .popup
+        wm transient .popup .
+        wm overrideredirect .popup true
+        wm attributes .popup -type popup_menu
+        set parent_geo [winfo geometry .]
+        regexp {[0-9]+x[0-9]+\+([0-9]+)\+([0-9]+)} $parent_geo parent_geo parent_x parent_y
+        # make popup appear somewhere near the mouse cursor...
+        wm geometry .popup "+[expr {$x + $parent_x}]+[expr {$y + $parent_y}]"
+        label .popup.l -text "Menu: [$obj get_name]"
+        entry .popup.e
+        .popup.e insert 0 [$obj get_name]
+        button .popup.r -text {Rename} -command [list [self object] rename_transition $obj]
+        button .popup.d -text {Delete} -command [list [self object] popup_destroy $obj]
+        button .popup.c -text {Close} -command [list destroy .popup]
+        pack .popup.l .popup.e .popup.r .popup.d .popup.c -fill x
+    }
+    method rename_transition {obj} {
+        .popup.l configure -text "Menu: [.popup.e get]"
+        $obj rename [.popup.e get]
     }
     method set_state_type {obj type} {
         # can only have one initial or final state in each state
@@ -386,7 +490,6 @@ oo::class create state {
     superclass notifier
     variable Canvas App Name Selected Tid Rid PointerOffset Type
     constructor {c a x y name} {
-        puts "Creating state: $name -> [self object]"
         next
         set Canvas $c
         set App $a
@@ -405,7 +508,6 @@ oo::class create state {
         $Canvas bind $Rid <3> "$App popup_state_menu [self object] %x %y"
     }
     destructor {
-        puts "Destroying state: $Name -> [self object]"
         $Canvas delete $Tid
         $Canvas delete $Rid
         next
@@ -495,11 +597,11 @@ oo::class create state {
 
 oo::class create transition {
     superclass notifier
-    variable Canvas Src Dst Event MidPoint Lid Cid Tid
-    constructor {canvas src dst event} {
-        puts "Creating transition: [$src get_name] to [$dst get_name] -> [self object]"
+    variable Canvas App Src Dst Event MidPoint Lid Cid Tid
+    constructor {canvas a src dst event} {
         next
         set Canvas $canvas
+        set App $a
         set Src $src
         set Dst $dst
         set Event $event
@@ -508,13 +610,12 @@ oo::class create transition {
         set Tid {}
         set MidPoint [my GetMidPointCoords]
         my CreateLine
-        $Src connect destroyed [self object] destroy
-        $Dst connect destroyed [self object] destroy
+        $Src connect destroyed [self object] destroy_later
+        $Dst connect destroyed [self object] destroy_later
         $Src connect redrawn [self object] redraw
         $Dst connect redrawn [self object] redraw
     }
     destructor {
-        puts "Destroying transition: [self object]"
         next
         $Canvas delete $Lid
         $Canvas delete $Cid
@@ -540,7 +641,13 @@ oo::class create transition {
             $Canvas raise $Cid $Lid
             $Canvas raise $Cid $Tid
             $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
+            $Canvas bind $Cid <3> "$App popup_transition_menu [self object] %x %y"
         }
+    }
+    method rename {name} {
+        set Event $name
+        $Canvas dchars $Tid 0 end
+        $Canvas insert $Tid end $Event
     }
     method set_points {points} {
         set MidPoint $points
@@ -551,6 +658,9 @@ oo::class create transition {
     method move_circle {x y} {
         # TODO fix moving to be smooth like the state
         my set_points [list $x $y]
+    }
+    method get_name {} {
+        return $Event
     }
     method GetTextCoords {} {
         lassign $MidPoint x y
