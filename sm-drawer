@@ -347,7 +347,9 @@ oo::class create my_app {
             }
         }
         # eof, create very last object
-        my CreateObject $mode $d
+        if {$mode != {}} {
+            my CreateObject $mode $d
+        }
         close $f
     }
     method get_state {name} {
