@@ -7,6 +7,8 @@ package require Tk
 
 # TODO high priority
 #
+# - constraint elements to visible canvas
+# - implement scrolling of canvas
 # - ?
 #
 # TODO next major feature
@@ -648,9 +650,11 @@ oo::class create transition {
         set MidPoint [my GetMidPointCoords]
         my CreateLine
         $Src connect destroyed [self object] destroy_later
-        $Dst connect destroyed [self object] destroy_later
         $Src connect redrawn [self object] redraw
-        $Dst connect redrawn [self object] redraw
+        if {$Src != $Dst} {
+            $Dst connect redrawn [self object] redraw
+            $Dst connect destroyed [self object] destroy_later
+        }
     }
     destructor {
         next
@@ -679,6 +683,11 @@ oo::class create transition {
             $Canvas raise $Cid $Tid
             $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
             $Canvas bind $Cid <3> "$App popup_transition_menu [self object] %x %y"
+            # this is a bit of a hack for the moment to make the
+            # position of the nub & text consistent when they are
+            # created and when they are moved
+            $Canvas moveto $Cid {*}[lrange [my GetCircleCoords] 0 1]
+            $Canvas moveto $Tid {*}[my GetTextCoords]
         }
     }
     method rename {name} {
@@ -711,6 +720,10 @@ oo::class create transition {
     }
     method GetMidPointCoords {} {
         lassign [my GetLineCoords] lsx lsy lex ley
+        # special case for self transitions, shift up
+        if {$Src == $Dst} {
+            return [list [expr {$lsx + ($lex - $lsx) / 2 - 70}] [expr {$lsy + ($ley - $lsy) / 2 + 50}]]
+        }
         return [list [expr {$lsx + ($lex - $lsx) / 2}] [expr {$lsy + ($ley - $lsy) / 2}]]
     }
     method GetCircleCoords {} {
