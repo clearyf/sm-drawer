@@ -9,8 +9,7 @@ package require Tk
 #
 # high priority
 #
-# - escape cancels add state/transition
-# - support multiple points on transitions
+# ?
 #
 # next major feature
 #
@@ -18,6 +17,7 @@ package require Tk
 #
 # nice to have
 #
+# - support multiple points on transitions
 # - class name (probably not required)
 # - mark parallel states
 
@@ -234,6 +234,8 @@ oo::class create my_app {
         pack .add_state .add_trans -side top
         pack $Canvas -expand true -fill both
         pack .quit .status_bar .load .save -side bottom
+
+        bind . <Escape> "[self object] cancel_current_op"
     }
     destructor {
         # teardown all notifications  before destroying the canvas
@@ -242,6 +244,15 @@ oo::class create my_app {
     }
     method set_status_bar {text} {
         .status_bar configure -text $text
+    }
+    method cancel_current_op {} {
+        $Canvas configure -cursor left_ptr
+        my set_status_bar {Idle}
+        set CurState idle
+        if {$Selected != {}} {
+            $Selected deselect
+            set Selected {}
+        }
     }
     method save {} {
         set f [open {saved_data.ini} {w}]
@@ -371,6 +382,7 @@ oo::class create my_app {
             return
         }
         my set_status_bar {Select the first state...}
+        $Canvas configure -cursor crosshair
         set CurState addTransition
     }
     method select {obj} {
@@ -386,6 +398,7 @@ oo::class create my_app {
             lappend Transitions $new_transition
             $new_transition connect destroyed [self object] transition_destroyed $new_transition
             $Selected deselect
+            $Canvas configure -cursor left_ptr
             set Selected {}
             set CurState idle
             my set_status_bar {Idle}
