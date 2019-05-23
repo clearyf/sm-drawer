@@ -341,7 +341,7 @@ oo::class create my_app {
         }
         $obj rename $new_name
     }
-    method popup_menu {obj x y} {
+    method popup_state_menu {obj x y} {
         if {[winfo exists .popup]} {
             destroy .popup
         }
@@ -363,9 +363,12 @@ oo::class create my_app {
         button .popup.f -text {Set Final} -command [list [self object] set_state_type $obj final]
         button .popup.d -text {Delete} -command [list [self object] popup_destroy_state $obj]
         button .popup.c -text {Close} -command [list destroy .popup]
-        pack .popup.l .popup.t .popup.e .popup.r .popup.i .popup.f .popup.n .popup.d .popup.c
+        pack .popup.l .popup.t .popup.e .popup.r .popup.i .popup.f .popup.n .popup.d .popup.c -fill x
     }
     method set_state_type {obj type} {
+        # can only have one initial or final state in each state
+        # machine.  if the target type is normal then this is
+        # effectively nop
         foreach state $States {
             if {[$state get_type] == $type} {
                 $state set_normal
@@ -373,6 +376,7 @@ oo::class create my_app {
             }
         }
         $obj set_type $type
+        .popup.t configure -text "Type: [$obj get_type]"
     }
 }
 
@@ -397,8 +401,8 @@ oo::class create state {
         $Canvas bind $Rid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
         $Canvas bind $Tid <B1-Motion> "[self object] move %x %y"
         $Canvas bind $Rid <B1-Motion> "[self object] move %x %y"
-        $Canvas bind $Tid <3> "$App popup_menu [self object] %x %y"
-        $Canvas bind $Rid <3> "$App popup_menu [self object] %x %y"
+        $Canvas bind $Tid <3> "$App popup_state_menu [self object] %x %y"
+        $Canvas bind $Rid <3> "$App popup_state_menu [self object] %x %y"
     }
     destructor {
         puts "Destroying state: $Name -> [self object]"
