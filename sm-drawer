@@ -45,11 +45,10 @@ oo::class create notifier {
     }
     destructor {
         enter "[self object] destroy"
-        if {$DestroyPending != {}} {
+        if {[my get_destroy_pending]} {
             # this could be the sign of a mistake, as if an object is
-            # pending deletion then direct destroy is probably a
-            # mistake.
-            # TODO check "after info $DestroyPending"?
+            # pending deletion then direct destroy is not a good sign.
+            puts "WARN: [self object] is being destroyed directly while pending destroy is active"
             after cancel $DestroyPending
         }
         my emit destroyed
@@ -75,6 +74,18 @@ oo::class create notifier {
         if {$DestroyPending == {}} {
             set DestroyPending [after idle [self object] destroy]
         }
+    }
+    method get_destroy_pending {} {
+        if {$DestroyPending != {}} {
+            try {
+                # throws error if callback already execut(ed|ing)
+                after info $DestroyPending
+                return true
+            } on {error} {} {
+                return false
+            }
+        }
+        return false
     }
     method get_connections {} {
         return $Listeners
@@ -196,10 +207,16 @@ if {![catch {$foo connect destroyed $bar destroy}]} {
 }
 # test add destroy_later for tearing down networks of notifiers
 $foo connect destroyed $bar destroy_later
+if {[$bar get_destroy_pending]} {
+    error "Test object is already pending deletion!"
+}
 $foo destroy
 # bar should only get destroyed when the event loop is entered
 if {![info object isa object $bar]} {
     error "Test object was unexpectedly destroyed!"
+}
+if {![$bar get_destroy_pending]} {
+    error "Test object is not pending deletion as expected!"
 }
 # enter event loop to process waiting destroy_later event
 update
