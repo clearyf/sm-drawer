@@ -5,16 +5,24 @@ package require Tk
 
 # TODO
 #
+# high priority
+#
+# - add popup menu to transitions (rename event, delete)
+# - escape cancels add state/transition
 # - support multiple points on transitions
-# - add event name to transitions
-# - add popup menu to transitions
 #
 # - bug in load/save/delete
+
+# next major feature
 #
 # - hierarchical states
 #
-# - class name
+# nice to have
+#
+# - class name (probably not required)
 # - mark parallel states
+#
+# required at some stage
 #
 # - testing (esp notifier to start with)
 
@@ -149,12 +157,13 @@ oo::class create my_app {
             Transition {
                 if {[dict exists $d from]
                     && [dict exists $d to]
-                    && [dict exists $d points]} {
+                    && [dict exists $d points]
+                    && [dict exists $d event]} {
 
                     set src [my get_state [dict get $d from]]
                     set dst [my get_state [dict get $d to]]
 
-                    set new_transition [transition new $Canvas $src $dst]
+                    set new_transition [transition new $Canvas $src $dst [dict get $d event]]
                     lappend Transitions $new_transition
                     $new_transition set_points [dict get $d points]
                     $new_transition connect destroyed [self object] transition_destroyed $new_transition
@@ -260,7 +269,7 @@ oo::class create my_app {
             my set_status_bar {Select the second state...}
             return true
         } else {
-            set new_transition [transition new $Canvas $Selected $obj]
+            set new_transition [transition new $Canvas $Selected $obj "foobar"]
             lappend Transitions $new_transition
             $new_transition connect destroyed [self object] transition_destroyed $new_transition
             $Selected deselect
@@ -446,15 +455,16 @@ oo::class create state {
 
 oo::class create transition {
     superclass notifier
-    variable Canvas Src Dst MidPoint Lid1 Lid2 Cid
-    constructor {canvas src dst} {
+    variable Canvas Src Dst Event MidPoint Lid Cid Tid
+    constructor {canvas src dst event} {
         next
         set Canvas $canvas
         set Src $src
         set Dst $dst
-        set Lid1 {}
-        set Lid2 {}
+        set Event $event
+        set Lid {}
         set Cid {}
+        set Tid {}
         set MidPoint [my GetMidPointCoords]
         my CreateLine
         $Src connect destroyed [self object] state_destroyed
@@ -463,29 +473,30 @@ oo::class create transition {
         $Dst connect redrawn [self object] redraw
     }
     destructor {
-        $Canvas delete $Lid1
-        $Canvas delete $Lid2
-        $Canvas delete $Cid
         next
+        $Canvas delete $Lid
+        $Canvas delete $Cid
+        $Canvas delete $Tid
     }
     method serialise {f} {
         puts $f "\[Transition\]"
         puts $f "from=[$Src get_name]"
         puts $f "to=[$Dst get_name]"
         puts $f "points=$MidPoint"
+        puts $f "event=$Event"
     }
     method CreateLine {} {
-        if {$Lid1 != {}} {
-            $Canvas delete $Lid1
-            $Canvas delete $Lid2
+        if {$Lid != {}} {
+            $Canvas delete $Lid
         }
-        set Lid1 [$Canvas create line [my GetLine1Coords]]
-        set Lid2 [$Canvas create line [my GetLine2Coords] -arrow last]
-        $Canvas lower $Lid1
-        $Canvas lower $Lid2
+        # TODO "-smooth true", try with two midpoints for curvy fun
+        set Lid [$Canvas create line {*}[my GetLineAllCoords] -arrow last]
+        $Canvas lower $Lid
         if {$Cid == {}} {
             set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
-            $Canvas raise $Cid $Lid1
+            set Tid [$Canvas create text [my GetTextCoords] -text $Event]
+            $Canvas raise $Cid $Lid
+            $Canvas raise $Cid $Tid
             $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
         }
     }
@@ -493,20 +504,21 @@ oo::class create transition {
         set MidPoint $points
         my CreateLine
         $Canvas moveto $Cid {*}[lrange [my GetCircleCoords] 0 1]
+        $Canvas moveto $Tid {*}[my GetTextCoords]
     }
     method move_circle {x y} {
-        set MidPoint [list $x $y]
-        my CreateLine
-        $Canvas moveto $Cid {*}[lrange [my GetCircleCoords] 0 1]
+        # TODO fix moving to be smooth like the state
+        my set_points [list $x $y]
+    }
+    method GetTextCoords {} {
+        lassign $MidPoint x y
+        return [list [expr {$x + 3}] [expr {$y + 3}]]
     }
     method GetLineCoords {} {
         return [list {*}[$Src get_exit_coords] {*}[$Dst get_entry_coords]]
     }
-    method GetLine1Coords {} {
-        return [list {*}[$Src get_exit_coords] {*}$MidPoint]
-    }
-    method GetLine2Coords {} {
-        return [list {*}$MidPoint {*}[$Dst get_entry_coords]]
+    method GetLineAllCoords {} {
+        return [list {*}[$Src get_exit_coords] {*}$MidPoint {*}[$Dst get_entry_coords]]
     }
     method GetMidPointCoords {} {
         lassign [my GetLineCoords] lsx lsy lex ley
