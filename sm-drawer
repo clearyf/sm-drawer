@@ -7,12 +7,13 @@ package require Tk
 
 # TODO high priority
 #
-# - constraint elements to visible canvas (important for hierarchical states)
-# - implement scrolling of canvas (scrollbar tracks canvas dims)
 # - group UI buttons (WIP)
 # - fix arrows always enter state horizontally
 # - move transition descriptions out of the way of the lines
 # - conditions on events
+# - panning
+#     bind .c <ButtonPress-1> {%W scan mark   %x %y}
+#     bind .c <B1-Motion>     {%W scan dragto %x %y 1}
 # - ?
 #
 # TODO next major feature
@@ -241,6 +242,16 @@ test_assert_false {info object isa object $bar} "object is destroyed"
 
 
 
+### handy functions
+
+proc clamp_coords_inside_bbox {coord bbox} {
+    lassign $coord x y
+    lassign $bbox bx1 by1 bx2 by2
+    return [list [expr {max($bx1,min($bx2,$x))}] [expr {max($by1,min($by2,$y))}]]
+}
+
+
+
 oo::class create my_app {
     superclass notifier
     variable Canvas StateIdx Selected Transitions States CurState
@@ -253,7 +264,8 @@ oo::class create my_app {
         set Transitions {}
         set States {}
 
-        canvas $c -background white -xscrollcommand {.scroll_b set} -yscrollcommand {.scroll_l set}
+        canvas $c -background white -xscrollcommand {.scroll_b set} -yscrollcommand {.scroll_l set} \
+            -scrollregion {0 0 800 800}
         frame .top
         frame .bot
         button .top.save -text {Save} -command [list [self object] save]
@@ -374,6 +386,9 @@ oo::class create my_app {
             my CreateObject $mode $d
         }
         close $f
+    }
+    method get_bbox {} {
+        return [$Canvas cget -scrollregion]
     }
     method get_state {name} {
         foreach state $States {
@@ -578,8 +593,9 @@ oo::class create state {
     }
     method move {raw_x raw_y} {
         lassign $PointerOffset offset_x offset_y
-        set new_x [expr {$raw_x - $offset_x}]
-        set new_y [expr {$raw_y - $offset_y}]
+        lassign [clamp_coords_inside_bbox \
+                     [list [expr {$raw_x - $offset_x}] [expr {$raw_y - $offset_y}]] \
+                     [$App get_bbox]] new_x new_y
         lassign [$Canvas bbox $Rid] old_x old_y
         set rel_x [expr {$new_x - $old_x}]
         set rel_y [expr {$new_y - $old_y}]
@@ -721,12 +737,14 @@ oo::class create transition {
         $Canvas insert $Tid end $Event
     }
     method move_circle {x y} {
-        my set_points [list $x $y]
+        my set_points [clamp_coords_inside_bbox [list $x $y] [$App get_bbox]]
     }
     method set_points {points} {
         lassign $MidPoint old_x old_y
-        set MidPoint $points
-        lassign $MidPoint new_x new_y
+        lassign $points screen_x screen_y
+        set new_x [$Canvas canvasx $screen_x]
+        set new_y [$Canvas canvasy $screen_y]
+        set MidPoint [list $new_x $new_y]
         my RedrawLine
         set rel_x [expr {$new_x - $old_x}]
         set rel_y [expr {$new_y - $old_y}]
