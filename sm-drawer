@@ -307,14 +307,17 @@ oo::class create my_app {
         }
     }
     method save {} {
-        set f [open {saved_data.ini} {w}]
-        foreach state $States {
-            $state serialise $f
+        try {
+            set f [open {saved_data.ini} {w}]
+            foreach state $States {
+                $state serialise $f
+            }
+            foreach transition $Transitions {
+                $transition serialise $f
+            }
+        } finally {
+            close $f
         }
-        foreach transition $Transitions {
-            $transition serialise $f
-        }
-        close $f
     }
     method CreateObject {mode d} {
         switch -exact -- $mode {
@@ -361,31 +364,34 @@ oo::class create my_app {
         }
         # destroying all states destroys all transitions too
 
-        set f [open {saved_data.ini} {r}]
-        set d [dict create]
-        set mode {}
-        while {[gets $f line] >= 0} {
-            switch -regexp -matchvar value -- $line {
-                {\[(.*)\]} {
-                    if {$mode != {}} {
-                        my CreateObject $mode $d
+        try {
+            set f [open {saved_data.ini} {r}]
+            set d [dict create]
+            set mode {}
+            while {[gets $f line] >= 0} {
+                switch -regexp -matchvar value -- $line {
+                    {\[(.*)\]} {
+                        if {$mode != {}} {
+                            my CreateObject $mode $d
+                        }
+                        set mode [lindex $value 1]
+                        set d [dict create]
                     }
-                    set mode [lindex $value 1]
-                    set d [dict create]
-                }
-                {([^=]+)=(.+)}  {
-                    dict set d [lindex $value 1] [lindex $value 2]
-                }
-                default {
-                    puts "Error parsing state: $line"
+                    {([^=]+)=(.+)}  {
+                        dict set d [lindex $value 1] [lindex $value 2]
+                    }
+                    default {
+                        puts "Error parsing state: $line"
+                    }
                 }
             }
+            # eof, create very last object
+            if {$mode != {}} {
+                my CreateObject $mode $d
+            }
+        } finally {
+            close $f
         }
-        # eof, create very last object
-        if {$mode != {}} {
-            my CreateObject $mode $d
-        }
-        close $f
     }
     method get_bbox {} {
         return [$Canvas cget -scrollregion]
