@@ -554,12 +554,12 @@ oo::class create state {
         set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
         set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
         my set_normal
-        $Canvas lower $Rid $Tid
         $Canvas bind $Tid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
-        $Canvas bind $Rid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
         $Canvas bind $Tid <B1-Motion> "[self object] move %x %y"
-        $Canvas bind $Rid <B1-Motion> "[self object] move %x %y"
         $Canvas bind $Tid <3> "$App popup_state_menu [self object] %x %y"
+        $Canvas lower $Rid $Tid
+        $Canvas bind $Rid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
+        $Canvas bind $Rid <B1-Motion> "[self object] move %x %y"
         $Canvas bind $Rid <3> "$App popup_state_menu [self object] %x %y"
     }
     destructor {
@@ -617,9 +617,14 @@ oo::class create state {
         $Canvas dchars $Tid 0 end
         $Canvas insert $Tid end $Name
         $Canvas delete $Rid
-        # repaint canvas
+        # can't find a way to resize the rectangle, so just recreate
+        # it.  Renaming is in any case a rare operation, say compared
+        # to moving the rectangle.
         set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
         $Canvas lower $Rid $Tid
+        $Canvas bind $Rid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
+        $Canvas bind $Rid <B1-Motion> "[self object] move %x %y"
+        $Canvas bind $Rid <3> "$App popup_state_menu [self object] %x %y"
         my emit redrawn
     }
     method get_type {} {
@@ -670,12 +675,19 @@ oo::class create transition {
         set Src $src
         set Dst $dst
         set Event $event
-        set Lid1 {}
-        set Lid2 {}
-        set Cid {}
-        set Tid {}
         set MidPoint [my GetMidPointCoords]
-        my CreateLine
+        set Lid1 [$Canvas create line [my GetLine1Coords] -smooth raw]
+        set Lid2 [$Canvas create line [my GetLine2Coords] -arrow last -smooth raw]
+        $Canvas lower $Lid1
+        $Canvas lower $Lid2
+        set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
+        set Tid [$Canvas create text [my GetTextCoords] -text $Event]
+        $Canvas raise $Cid $Lid1
+        $Canvas raise $Cid $Lid2
+        $Canvas raise $Cid $Tid
+        $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
+        $Canvas bind $Cid <3> "$App popup_transition_menu [self object] %x %y"
+
         $Src connect destroyed [self object] destroy_later
         $Src connect redrawn [self object] redraw
         if {$Src != $Dst} {
@@ -697,24 +709,11 @@ oo::class create transition {
         puts $f "points=$MidPoint"
         puts $f "event=$Event"
     }
-    method CreateLine {} {
-        if {$Lid1 != {}} {
-            $Canvas delete $Lid1
-            $Canvas delete $Lid2
-        }
-        set Lid1 [$Canvas create line {*}[my GetLine1Coords] -smooth raw]
-        set Lid2 [$Canvas create line {*}[my GetLine2Coords] -arrow last -smooth raw]
-        $Canvas lower $Lid1
-        $Canvas lower $Lid2
-        if {$Cid == {}} {
-            set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
-            set Tid [$Canvas create text [my GetTextCoords] -text $Event]
-            $Canvas raise $Cid $Lid1
-            $Canvas raise $Cid $Lid2
-            $Canvas raise $Cid $Tid
-            $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
-            $Canvas bind $Cid <3> "$App popup_transition_menu [self object] %x %y"
-        }
+    method RedrawLine {} {
+        $Canvas dchars $Lid1 0 end
+        $Canvas dchars $Lid2 0 end
+        $Canvas insert $Lid1 end [my GetLine1Coords]
+        $Canvas insert $Lid2 end [my GetLine2Coords]
     }
     method rename {name} {
         set Event $name
@@ -728,8 +727,7 @@ oo::class create transition {
         lassign $MidPoint old_x old_y
         set MidPoint $points
         lassign $MidPoint new_x new_y
-        my CreateLine
-        # calculate relative moment since last update
+        my RedrawLine
         set rel_x [expr {$new_x - $old_x}]
         set rel_y [expr {$new_y - $old_y}]
         $Canvas move $Cid $rel_x $rel_y
@@ -767,7 +765,7 @@ oo::class create transition {
     }
     method GetMidPointCoords {} {
         lassign [my GetLineCoords] lsx lsy lex ley
-        # special case for self transitions, shift up
+        # special case for self transitions, shift down and to left
         if {$Src == $Dst} {
             return [list [expr {$lsx + ($lex - $lsx) / 2 - 70}] [expr {$lsy + ($ley - $lsy) / 2 + 50}]]
         }
@@ -779,8 +777,7 @@ oo::class create transition {
         return [list [expr {$mx - $r}] [expr {$my - $r}] [expr {$mx + $r}] [expr {$my + $r}]]
     }
     method redraw {args} {
-        # TODO howto move line instead of replacing it?
-        my CreateLine
+        my RedrawLine
     }
 }
 
