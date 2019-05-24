@@ -7,6 +7,7 @@ package require Tk
 
 # TODO high priority
 #
+# - change initial/final state entry/exit
 # - group UI buttons (WIP)
 # - fix arrows always enter state horizontally
 # - move transition descriptions out of the way of the lines
@@ -323,12 +324,10 @@ oo::class create my_app {
         switch -exact -- $mode {
             State {
                 if {[dict exists $d name]
-                    && [dict exists $d type]
                     && [dict exists $d position]} {
                     set new_state [state new $Canvas [self object] {*}[dict get $d position] [dict get $d name]]
                     lappend States $new_state
                     $new_state connect destroyed [self object] state_destroyed $new_state
-                    $new_state set_type [dict get $d type]
                 } else {
                     puts "Don't have enough information to construct a state: $d"
                 }
@@ -510,16 +509,12 @@ oo::class create my_app {
         # make popup appear somewhere near the mouse cursor...
         wm geometry .popup "+[expr {$x + $parent_x}]+[expr {$y + $parent_y}]"
         label .popup.l -text "Menu: [$obj get_name]"
-        label .popup.t -text "Type: [$obj get_type]"
         entry .popup.e
         .popup.e insert 0 [$obj get_name]
         button .popup.r -text {Rename} -command [list [self object] popup_rename_state $obj]
-        button .popup.i -text {Set Initial} -command [list [self object] set_state_type $obj initial]
-        button .popup.n -text {Set Normal} -command [list [self object] set_state_type $obj normal]
-        button .popup.f -text {Set Final} -command [list [self object] set_state_type $obj final]
         button .popup.d -text {Delete} -command [list [self object] popup_destroy $obj]
         button .popup.c -text {Close} -command [list destroy .popup]
-        pack .popup.l .popup.t .popup.e .popup.r .popup.i .popup.f .popup.n .popup.d .popup.c -fill x
+        pack .popup.l .popup.e .popup.r .popup.d .popup.c -fill x
     }
     method popup_transition_menu {obj x y} {
         if {[winfo exists .popup]} {
@@ -545,26 +540,13 @@ oo::class create my_app {
         .popup.l configure -text "Menu: [.popup.e get]"
         $obj rename [.popup.e get]
     }
-    method set_state_type {obj type} {
-        # can only have one initial or final state in each state
-        # machine.  if the target type is normal then this is
-        # effectively nop
-        foreach state $States {
-            if {[$state get_type] == $type} {
-                $state set_normal
-                break
-            }
-        }
-        $obj set_type $type
-        .popup.t configure -text "Type: [$obj get_type]"
-    }
 }
 
 
 
 oo::class create state {
     superclass notifier
-    variable Canvas App Name Selected Tid Rid PointerOffset Type
+    variable Canvas App Name Selected Tid Rid PointerOffset
     constructor {c a x y name} {
         next
         set Canvas $c
@@ -574,7 +556,6 @@ oo::class create state {
         set PointerOffset [list 0 0]
         set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
         set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
-        my set_normal
         $Canvas addtag [self object] withtag $Tid
         $Canvas addtag [self object] withtag $Rid
         $Canvas bind [self object] <ButtonPress-1> "[self object] save_pointer_offset %x %y"
@@ -622,14 +603,10 @@ oo::class create state {
     method serialise {f} {
         puts $f "\[State\]"
         puts $f "name=[my get_name]"
-        puts $f "type=[my get_type]"
-        puts $f "position=[my get_coords]"
+        puts $f "position=[my GetCoords]"
     }
     method get_name {} {
         return $Name
-    }
-    method get_coords {} {
-        $Canvas coords $Tid
     }
     method rename {new_name} {
         set Name $new_name
@@ -644,28 +621,6 @@ oo::class create state {
         $Canvas addtag [self object] withtag $Rid
         my emit redrawn
     }
-    method get_type {} {
-        return $Type
-    }
-    method set_type {type} {
-        switch -exact $type {
-            normal { my set_normal }
-            initial { my set_initial }
-            final { my set_final }
-        }
-    }
-    method set_normal {} {
-        set Type normal
-        $Canvas itemconfigure $Rid -fill lightgrey
-    }
-    method set_initial {} {
-        set Type initial
-        $Canvas itemconfigure $Rid -fill skyblue
-    }
-    method set_final {} {
-        set Type final
-        $Canvas itemconfigure $Rid -fill lightgreen
-    }
     method select {} {
         if {[$App select [self object]]} {
             # select is ok now
@@ -675,8 +630,11 @@ oo::class create state {
     }
     method deselect {} {
         set Selected false
-        my set_type [my get_type]
+        $Canvas itemconfigure $Rid -fill lightgrey
         $App deselect [self object]
+    }
+    method GetCoords {} {
+        $Canvas coords $Tid
     }
 }
 
@@ -725,12 +683,6 @@ oo::class create transition {
         puts $f "points=$MidPoint"
         puts $f "event=$Event"
     }
-    method RedrawLine {} {
-        $Canvas dchars $Lid1 0 end
-        $Canvas dchars $Lid2 0 end
-        $Canvas insert $Lid1 end [my GetLine1Coords]
-        $Canvas insert $Lid2 end [my GetLine2Coords]
-    }
     method rename {name} {
         set Event $name
         $Canvas dchars $Tid 0 end
@@ -738,6 +690,9 @@ oo::class create transition {
     }
     method move_circle {x y} {
         my set_points [clamp_coords_inside_bbox [list $x $y] [$App get_bbox]]
+    }
+    method redraw {args} {
+        my RedrawLine
     }
     method set_points {points} {
         lassign $MidPoint old_x old_y
@@ -752,6 +707,12 @@ oo::class create transition {
     }
     method get_name {} {
         return $Event
+    }
+    method RedrawLine {} {
+        $Canvas dchars $Lid1 0 end
+        $Canvas dchars $Lid2 0 end
+        $Canvas insert $Lid1 end [my GetLine1Coords]
+        $Canvas insert $Lid2 end [my GetLine2Coords]
     }
     method GetCircleRadius {} {
         return 5
@@ -791,9 +752,6 @@ oo::class create transition {
         lassign $MidPoint mx my
         set r [my GetCircleRadius]
         return [list [expr {$mx - $r}] [expr {$my - $r}] [expr {$mx + $r}] [expr {$my + $r}]]
-    }
-    method redraw {args} {
-        my RedrawLine
     }
 }
 
