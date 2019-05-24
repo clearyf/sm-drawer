@@ -569,17 +569,15 @@ oo::class create state {
         set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
         set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
         my set_normal
-        $Canvas bind $Tid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
-        $Canvas bind $Tid <B1-Motion> "[self object] move %x %y"
-        $Canvas bind $Tid <3> "$App popup_state_menu [self object] %x %y"
+        $Canvas addtag [self object] withtag $Tid
+        $Canvas addtag [self object] withtag $Rid
+        $Canvas bind [self object] <ButtonPress-1> "[self object] save_pointer_offset %x %y"
+        $Canvas bind [self object] <B1-Motion> "[self object] move %x %y"
+        $Canvas bind [self object] <3> "$App popup_state_menu [self object] %x %y"
         $Canvas lower $Rid $Tid
-        $Canvas bind $Rid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
-        $Canvas bind $Rid <B1-Motion> "[self object] move %x %y"
-        $Canvas bind $Rid <3> "$App popup_state_menu [self object] %x %y"
     }
     destructor {
-        $Canvas delete $Tid
-        $Canvas delete $Rid
+        $Canvas delete [self object]
         next
     }
     # On ButtonPress save the location of the pointer so we have a
@@ -599,8 +597,7 @@ oo::class create state {
         lassign [$Canvas bbox $Rid] old_x old_y
         set rel_x [expr {$new_x - $old_x}]
         set rel_y [expr {$new_y - $old_y}]
-        $Canvas move $Tid $rel_x $rel_y
-        $Canvas move $Rid $rel_x $rel_y
+        $Canvas move [self object] $rel_x $rel_y
         my emit redrawn
     }
     method get_box_coords {} {
@@ -638,9 +635,7 @@ oo::class create state {
         # to moving the rectangle.
         set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
         $Canvas lower $Rid $Tid
-        $Canvas bind $Rid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
-        $Canvas bind $Rid <B1-Motion> "[self object] move %x %y"
-        $Canvas bind $Rid <3> "$App popup_state_menu [self object] %x %y"
+        $Canvas addtag [self object] withtag $Rid
         my emit redrawn
     }
     method get_type {} {
@@ -669,12 +664,12 @@ oo::class create state {
         if {[$App select [self object]]} {
             # select is ok now
             set Selected true
-            $Canvas itemconfigure $Tid -fill blue -activefill red
+            $Canvas itemconfigure $Rid -fill blue
         }
     }
     method deselect {} {
         set Selected false
-        $Canvas itemconfigure $Tid -fill black -activefill red
+        my set_type [my get_type]
         $App deselect [self object]
     }
 }
@@ -698,11 +693,13 @@ oo::class create transition {
         $Canvas lower $Lid2
         set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
         set Tid [$Canvas create text [my GetTextCoords] -text $Event]
+        $Canvas addtag [self object] withtag $Cid
+        $Canvas addtag [self object] withtag $Tid
         $Canvas raise $Cid $Lid1
         $Canvas raise $Cid $Lid2
         $Canvas raise $Cid $Tid
-        $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
-        $Canvas bind $Cid <3> "$App popup_transition_menu [self object] %x %y"
+        $Canvas bind [self object] <B1-Motion> "[self object] move_circle %x %y"
+        $Canvas bind [self object] <3> "$App popup_transition_menu [self object] %x %y"
 
         $Src connect destroyed [self object] destroy_later
         $Src connect redrawn [self object] redraw
@@ -713,10 +710,7 @@ oo::class create transition {
     }
     destructor {
         next
-        $Canvas delete $Lid1
-        $Canvas delete $Lid2
-        $Canvas delete $Cid
-        $Canvas delete $Tid
+        $Canvas delete $Lid1 $Lid2 [self object]
     }
     method serialise {f} {
         puts $f "\[Transition\]"
@@ -748,8 +742,7 @@ oo::class create transition {
         my RedrawLine
         set rel_x [expr {$new_x - $old_x}]
         set rel_y [expr {$new_y - $old_y}]
-        $Canvas move $Cid $rel_x $rel_y
-        $Canvas move $Tid $rel_x $rel_y
+        $Canvas move [self object] $rel_x $rel_y
     }
     method get_name {} {
         return $Event
