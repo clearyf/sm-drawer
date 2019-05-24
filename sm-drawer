@@ -765,14 +765,13 @@ oo::class create transition {
     method GetLine1Coords {} {
         lassign [$Src get_exit_coords] exitx exity
         lassign $MidPoint mx my
-        set offset 100
-        return [list $exitx $exity [expr {$exitx + $offset}] $exity $mx $my $mx $my]
+        return [list $exitx $exity [expr {$exitx + [my GetBezierOffset]}] $exity $mx $my $mx $my]
     }
     method GetLine2Coords {} {
         lassign $MidPoint mx my
         lassign [$Dst get_entry_coords] entryx entryy
-        set offset 100
-        return [list $mx $my $mx $my [expr {$entryx - $offset}] $entryy $entryx $entryy]
+        set offset [my GetBezierOffset]
+        return [list $mx $my $mx $my [expr {$entryx - [my GetBezierOffset]}] $entryy $entryx $entryy]
     }
     method GetMidPointCoords {} {
         lassign [my GetLineCoords] lsx lsy lex ley
