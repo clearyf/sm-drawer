@@ -10,7 +10,9 @@ package require Tk
 # - constraint elements to visible canvas (important for hierarchical states)
 # - implement scrolling of canvas (scrollbar tracks canvas dims)
 # - group UI buttons (WIP)
-# - pad rectangles around states
+# - fix arrows always enter state horizontally
+# - move transition descriptions out of the way of the lines
+# - conditions on events
 # - ?
 #
 # TODO next major feature
@@ -19,6 +21,8 @@ package require Tk
 #
 # TODO nice to have
 #
+# - menubar (file edit help)
+# - toolbar
 # - support multiple points on transitions
 # - class name (probably not required)
 # - mark parallel states
@@ -548,7 +552,7 @@ oo::class create state {
         set Selected false
         set PointerOffset [list 0 0]
         set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
-        set Rid [$Canvas create rectangle [$Canvas bbox $Tid] -fill lightgrey]
+        set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
         my set_normal
         $Canvas lower $Rid $Tid
         $Canvas bind $Tid <ButtonPress-1> "[self object] save_pointer_offset %x %y"
@@ -567,16 +571,34 @@ oo::class create state {
     # basis for moving the state without it jumping all over the
     # place.
     method save_pointer_offset {x y} {
-        lassign [my get_entry_coords] nw_x nw_y
+        lassign [$Canvas bbox $Rid] nw_x nw_y
         set PointerOffset [list [expr {$x - $nw_x}] [expr {$y - $nw_y}]]
         # call next action
         my select
     }
+    method move {raw_x raw_y} {
+        lassign $PointerOffset offset_x offset_y
+        set new_x [expr {$raw_x - $offset_x}]
+        set new_y [expr {$raw_y - $offset_y}]
+        lassign [$Canvas bbox $Rid] old_x old_y
+        set rel_x [expr {$new_x - $old_x}]
+        set rel_y [expr {$new_y - $old_y}]
+        $Canvas move $Tid $rel_x $rel_y
+        $Canvas move $Rid $rel_x $rel_y
+        my emit redrawn
+    }
+    method get_box_coords {} {
+        lassign [$Canvas bbox $Tid] x1 y1 x2 y2
+        set o 5
+        return [list [expr {$x1 - $o}] [expr {$y1 - $o}] [expr {$x2 + $o}] [expr {$y2 + $o}]]
+    }
     method get_entry_coords {} {
-        return [lrange [$Canvas bbox $Tid] 0 1]
+        lassign [my get_box_coords] x1 y1 x2 y2
+        return [list $x1 [expr {$y1 + ($y2 - $y1) / 2}]]
     }
     method get_exit_coords {} {
-        return [lrange [$Canvas bbox $Tid] 2 3]
+        lassign [my get_box_coords] x1 y1 x2 y2
+        return [list $x2 [expr {$y1 + ($y2 - $y1) / 2}]]
     }
     method serialise {f} {
         puts $f "\[State\]"
@@ -587,14 +609,6 @@ oo::class create state {
     method get_name {} {
         return $Name
     }
-    method move {new_x new_y} {
-        lassign $PointerOffset offset_x offset_y
-        set x [expr {$new_x - $offset_x}]
-        set y [expr {$new_y - $offset_y}]
-        $Canvas moveto $Tid $x $y
-        $Canvas moveto $Rid $x $y
-        my emit redrawn
-    }
     method get_coords {} {
         $Canvas coords $Tid
     }
@@ -604,7 +618,7 @@ oo::class create state {
         $Canvas insert $Tid end $Name
         $Canvas delete $Rid
         # repaint canvas
-        set Rid [$Canvas create rectangle [$Canvas bbox $Tid] -fill lightgrey]
+        set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
         $Canvas lower $Rid $Tid
         my emit redrawn
     }
@@ -648,7 +662,7 @@ oo::class create state {
 
 oo::class create transition {
     superclass notifier
-    variable Canvas App Src Dst Event MidPoint Lid Cid Tid
+    variable Canvas App Src Dst Event MidPoint Lid1 Lid2 Cid Tid
     constructor {canvas a src dst event} {
         next
         set Canvas $canvas
@@ -656,7 +670,8 @@ oo::class create transition {
         set Src $src
         set Dst $dst
         set Event $event
-        set Lid {}
+        set Lid1 {}
+        set Lid2 {}
         set Cid {}
         set Tid {}
         set MidPoint [my GetMidPointCoords]
@@ -670,7 +685,8 @@ oo::class create transition {
     }
     destructor {
         next
-        $Canvas delete $Lid
+        $Canvas delete $Lid1
+        $Canvas delete $Lid2
         $Canvas delete $Cid
         $Canvas delete $Tid
     }
@@ -682,24 +698,22 @@ oo::class create transition {
         puts $f "event=$Event"
     }
     method CreateLine {} {
-        if {$Lid != {}} {
-            $Canvas delete $Lid
+        if {$Lid1 != {}} {
+            $Canvas delete $Lid1
+            $Canvas delete $Lid2
         }
-        # TODO "-smooth true", try with two midpoints for curvy fun
-        set Lid [$Canvas create line {*}[my GetLineAllCoords] -arrow last]
-        $Canvas lower $Lid
+        set Lid1 [$Canvas create line {*}[my GetLine1Coords] -smooth raw]
+        set Lid2 [$Canvas create line {*}[my GetLine2Coords] -arrow last -smooth raw]
+        $Canvas lower $Lid1
+        $Canvas lower $Lid2
         if {$Cid == {}} {
             set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
             set Tid [$Canvas create text [my GetTextCoords] -text $Event]
-            $Canvas raise $Cid $Lid
+            $Canvas raise $Cid $Lid1
+            $Canvas raise $Cid $Lid2
             $Canvas raise $Cid $Tid
             $Canvas bind $Cid <B1-Motion> "[self object] move_circle %x %y"
             $Canvas bind $Cid <3> "$App popup_transition_menu [self object] %x %y"
-            # this is a bit of a hack for the moment to make the
-            # position of the nub & text consistent when they are
-            # created and when they are moved
-            $Canvas moveto $Cid {*}[lrange [my GetCircleCoords] 0 1]
-            $Canvas moveto $Tid {*}[my GetTextCoords]
         }
     }
     method rename {name} {
@@ -707,32 +721,49 @@ oo::class create transition {
         $Canvas dchars $Tid 0 end
         $Canvas insert $Tid end $Event
     }
-    method set_points {points} {
-        set MidPoint $points
-        my CreateLine
-        $Canvas moveto $Cid {*}[lrange [my GetCircleCoords] 0 1]
-        $Canvas moveto $Tid {*}[my GetTextCoords]
-    }
     method move_circle {x y} {
-        # TODO fix moving to be smooth like the state
         my set_points [list $x $y]
+    }
+    method set_points {points} {
+        lassign $MidPoint old_x old_y
+        set MidPoint $points
+        lassign $MidPoint new_x new_y
+        my CreateLine
+        # calculate relative moment since last update
+        set rel_x [expr {$new_x - $old_x}]
+        set rel_y [expr {$new_y - $old_y}]
+        $Canvas move $Cid $rel_x $rel_y
+        $Canvas move $Tid $rel_x $rel_y
     }
     method get_name {} {
         return $Event
     }
     method GetCircleRadius {} {
-        return 3
+        return 5
+    }
+    method GetBezierOffset {} {
+        # looks ok
+        return 100
     }
     method GetTextCoords {} {
         lassign $MidPoint x y
         set r [my GetCircleRadius]
-        return [list [expr {$x + $r}] [expr {$y + $r}]]
+        return [list $x [expr {$y + $r + 10}]]
     }
     method GetLineCoords {} {
         return [list {*}[$Src get_exit_coords] {*}[$Dst get_entry_coords]]
     }
-    method GetLineAllCoords {} {
-        return [list {*}[$Src get_exit_coords] {*}$MidPoint {*}[$Dst get_entry_coords]]
+    method GetLine1Coords {} {
+        lassign [$Src get_exit_coords] exitx exity
+        lassign $MidPoint mx my
+        set offset 100
+        return [list $exitx $exity [expr {$exitx + $offset}] $exity $mx $my $mx $my]
+    }
+    method GetLine2Coords {} {
+        lassign $MidPoint mx my
+        lassign [$Dst get_entry_coords] entryx entryy
+        set offset 100
+        return [list $mx $my $mx $my [expr {$entryx - $offset}] $entryy $entryx $entryy]
     }
     method GetMidPointCoords {} {
         lassign [my GetLineCoords] lsx lsy lex ley
