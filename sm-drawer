@@ -11,7 +11,7 @@ package require Tk
 # - fix arrows always enter state horizontally
 # - move transition descriptions out of the way of the lines
 # - conditions on events
-# - panning
+# - panning (maybe separate tool button?)
 #     bind .c <ButtonPress-1> {%W scan mark   %x %y}
 #     bind .c <B1-Motion>     {%W scan dragto %x %y 1}
 # - ?
@@ -499,7 +499,7 @@ oo::class create my_app {
         wm transient .popup .
         wm overrideredirect .popup true
         wm attributes .popup -type popup_menu
-        set parent_geo [winfo geometry .]
+        set parent_geo [winfo geometry $Canvas]
         regexp {[0-9]+x[0-9]+\+([0-9]+)\+([0-9]+)} $parent_geo parent_geo parent_x parent_y
         # make popup appear somewhere near the mouse cursor...
         wm geometry .popup "+[expr {$x + $parent_x}]+[expr {$y + $parent_y}]"
@@ -523,7 +523,7 @@ oo::class create my_app {
         wm transient .popup .
         wm overrideredirect .popup true
         wm attributes .popup -type popup_menu
-        set parent_geo [winfo geometry .]
+        set parent_geo [winfo geometry $Canvas]
         regexp {[0-9]+x[0-9]+\+([0-9]+)\+([0-9]+)} $parent_geo parent_geo parent_x parent_y
         # make popup appear somewhere near the mouse cursor...
         wm geometry .popup "+[expr {$x + $parent_x}]+[expr {$y + $parent_y}]"
