@@ -358,10 +358,15 @@ oo::class create my_app {
         if {$CurState != {idle}} {
             return
         }
-        while {[llength $States] > 0} {
-            [lindex $States end] destroy
+        foreach state $States {
+            $state destroy_later
         }
-        # destroying all states destroys all transitions too
+        # destroying all states destroys all transitions too.  have to
+        # enter event loop to process them though.
+        update idletasks
+        if {[llength $States] != 0 || [llength $Transitions] != 0} {
+            error "Not all states & transitions were destroyed!"
+        }
 
         try {
             set f [open {saved_data.ini} {r}]
