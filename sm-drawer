@@ -119,10 +119,12 @@ oo::class create notifier {
             }
         }
         dict lappend Listeners $name [list $dst {*}$args]
-        # monitor destroyed signal from dst, so we can disconnect it
-        # when it is destroyed and don't call methods on non-existent
-        # objects.
-        $dst connect destroyed [self object] disconnect_obj $dst
+        if {[self object] != $dst} {
+            # monitor destroyed signal from dst, so we can disconnect
+            # it when it is destroyed and don't call methods on
+            # non-existent objects.
+            $dst connect destroyed [self object] disconnect_obj $dst
+        }
         leave "[self object] connect $name $dst $args -> true"
         return true
     }
@@ -251,6 +253,61 @@ proc clamp_coords_inside_bbox {coord bbox} {
     return [list [expr {max($bx1,min($bx2,$x))}] [expr {max($by1,min($by2,$y))}]]
 }
 
+proc calc_circle_bbox {x y r} {
+    return [list [expr {$x - $r}] [expr {$y - $r}] [expr {$x + $r}] [expr {$y + $r}]]
+}
+
+proc calc_centre_coords {bbox} {
+    lassign $bbox bx1 by1 bx2 by2
+    return [list [expr {$bx1 + ($bx2 - $bx1) / 2}] \
+                [expr {$by1 + ($by2 - $by1) / 2}]]
+}
+
+proc create_popup {} {
+    lassign [winfo pointerxy .] x y
+    if {[winfo exists .popup]} {
+        # subsequent popups should appear at the same spot as the
+        # first one.
+        set x [winfo x .popup]
+        set y [winfo y .popup]
+        destroy .popup
+    }
+    tk::toplevel .popup
+    wm transient .popup .
+    wm overrideredirect .popup true
+    wm attributes .popup -type popup_menu
+    wm geometry .popup "+$x+$y"
+}
+
+proc create_popup_menu {name buttons} {
+    create_popup
+    label .popup.l -text "Menu: $name"
+    pack .popup.l -fill x
+    foreach b $buttons {
+        lassign $b t c
+        button ".popup.n_$c" -text $t -command "$c"
+        pack ".popup.n_$c" -fill x
+    }
+    button .popup.c -text {Close} -command "destroy .popup"
+    pack .popup.c -fill x
+}
+
+proc create_rename_popup {name args} {
+    create_popup
+    label .popup.l -text "Rename $name"
+    entry .popup.e
+    .popup.e insert 0 $name
+    button .popup.o -text {Ok} \
+        -command "continue_rename_popup $args"
+    button .popup.c -text {Cancel} -command "destroy .popup"
+    pack .popup.l .popup.e .popup.o .popup.c -fill x
+    puts "rename popup created"
+}
+
+proc continue_rename_popup {args} {
+    {*}$args [.popup.e get]
+    destroy .popup
+}
 
 
 oo::class create my_app {
@@ -265,22 +322,26 @@ oo::class create my_app {
         set Transitions {}
         set States {}
 
-        canvas $c -background white -xscrollcommand {.scroll_b set} -yscrollcommand {.scroll_l set} \
-            -scrollregion {0 0 800 800}
+        canvas $c -background white -xscrollcommand {.scroll_b set} \
+            -yscrollcommand {.scroll_l set} -scrollregion {0 0 800 800}
         frame .top
         frame .bot
         button .top.save -text {Save} -command [list [self object] save]
         button .top.load -text {Load} -command [list [self object] load]
         button .top.quit -text {Quit} -command exit
         label .bot.status_bar -text {Idle}
-        button .top.add_state -text {Add State} -command [list [self object] switch_to_add_state_mode]
-        button .top.add_trans -text {Add Transition} -command [list [self object] switch_to_add_transition_mode]
+        button .top.add_istate -text {Add Initial State} \
+            -command [list [self object] switch_to_add_state_mode initial]
+        button .top.add_state -text {Add State} \
+            -command [list [self object] switch_to_add_state_mode normal]
+        button .top.add_trans -text {Add Transition} \
+            -command [list [self object] switch_to_add_transition_mode]
         scrollbar .scroll_l -command {.c yview}
         scrollbar .scroll_b -command {.c xview} -orient horizontal
 
         pack .bot -side bottom
         pack .top -side top
-        pack .top.add_state .top.add_trans -side left
+        pack .top.add_state .top.add_istate .top.add_trans -side left
         pack .scroll_l -side right -fill y
         pack $Canvas -expand true -fill both
         pack .scroll_b -fill x
@@ -291,8 +352,11 @@ oo::class create my_app {
         bind . <Escape> "[self object] cancel_current_op"
     }
     destructor {
-        # teardown all notifications  before destroying the canvas
+        # teardown all notifications before destroying the canvas
         next
+        # ensure all destroy_later are finished before destroying the
+        # canvas
+        update idletasks
         destroy $Canvas
     }
     method set_status_bar {text} {
@@ -325,9 +389,11 @@ oo::class create my_app {
             State {
                 if {[dict exists $d name]
                     && [dict exists $d position]} {
-                    set new_state [state new $Canvas [self object] {*}[dict get $d position] [dict get $d name]]
+                    set new_state [state new $Canvas [self object] \
+                                       {*}[dict get $d position] [dict get $d name]]
                     lappend States $new_state
-                    $new_state connect destroyed [self object] state_destroyed $new_state
+                    $new_state connect destroyed [self object] \
+                        state_destroyed $new_state
                 } else {
                     puts "Don't have enough information to construct a state: $d"
                 }
@@ -341,12 +407,24 @@ oo::class create my_app {
                     set src [my get_state [dict get $d from]]
                     set dst [my get_state [dict get $d to]]
 
-                    set new_transition [transition new $Canvas [self object] $src $dst [dict get $d event]]
+                    set new_transition [transition new $Canvas [self object] \
+                                            $src $dst [dict get $d event] \
+                                            [dict get $d points]]
                     lappend Transitions $new_transition
-                    $new_transition set_points [dict get $d points]
-                    $new_transition connect destroyed [self object] transition_destroyed $new_transition
+                    $new_transition connect destroyed [self object] \
+                        transition_destroyed $new_transition
                 } else {
                     puts "Don't have enough information to construct a transition: $d"
+                }
+            }
+            {Initial State} {
+                if {[dict exists $d position]} {
+                    puts "[dict get $d position]"
+                    set new_state [initial_state new $Canvas [self object] \
+                                       {*}[dict get $d position]]
+                    lappend States $new_state
+                    $new_state connect destroyed [self object] \
+                        state_destroyed $new_state
                 }
             }
             default {
@@ -408,37 +486,54 @@ oo::class create my_app {
         }
         throw STATE_NOT_FOUND "No state called $name found!"
     }
-    method switch_to_add_state_mode {} {
+    method switch_to_add_state_mode {type} {
         if {$CurState != {idle}} {
             return
         }
-        set CurState addState
+        switch -- $type {
+            initial {
+                set CurState addInitialState
+            }
+            normal {
+                set CurState addNormalState
+            }
+            default {
+                error "Unknown state type: $type"
+            }
+        }
         bind $Canvas <Button-1> "[self object] add_state %x %y"
         $Canvas configure -cursor crosshair
         my set_status_bar {Click to add new state...}
     }
     method add_state {x y} {
-        if {$CurState != {addState}} {
-            return
+        switch -- $CurState {
+            addInitialState {
+                set new_state [initial_state new $Canvas [self object] $x $y]
+            }
+            addNormalState {
+                # loop until there is no state with this name; this is
+                # required in case we save a state graph and then load it
+                # again.  Alternative would be save the StateIdx in the saved
+                # data, but we don't want to leak implementation details like
+                # that.
+                try {
+                    while {true} {
+                        incr StateIdx
+                        my get_state "state$StateIdx"
+                    }
+                } trap {STATE_NOT_FOUND} {} {}
+                set new_state [state new $Canvas [self object] $x $y "state$StateIdx"]
+            }
+            default {
+                return
+            }
         }
-        set CurState idle
         bind $Canvas <Button-1> {}
         $Canvas configure -cursor left_ptr
         my set_status_bar {Idle}
-        # loop until there is no state with this name; this is
-        # required in case we save a state graph and then load it
-        # again.  Alternative would be save the StateIdx in the saved
-        # data, but we don't want to leak implementation details like
-        # that.
-        try {
-            while {true} {
-                incr StateIdx
-                my get_state "state$StateIdx"
-            }
-        } trap {STATE_NOT_FOUND} {} {}
-        set new_state [state new $Canvas [self object] $x $y "state$StateIdx"]
         lappend States $new_state
         $new_state connect destroyed [self object] state_destroyed $new_state
+        set CurState idle
     }
     method state_destroyed {state} {
         set idx [lsearch -exact $States $state]
@@ -461,9 +556,11 @@ oo::class create my_app {
             my set_status_bar {Select the second state...}
             return true
         } else {
-            set new_transition [transition new $Canvas [self object] $Selected $obj "foobar"]
+            set new_transition [transition new $Canvas [self object] \
+                                    $Selected $obj "foobar"]
             lappend Transitions $new_transition
-            $new_transition connect destroyed [self object] transition_destroyed $new_transition
+            $new_transition connect destroyed [self object] \
+                transition_destroyed $new_transition
             $Selected deselect
             $Canvas configure -cursor left_ptr
             set Selected {}
@@ -486,114 +583,118 @@ oo::class create my_app {
         set answer [tk_messageBox -message "Delete [$obj get_name]?" \
                         -icon question -type yesno]
         switch -- $answer {
-            yes {$obj destroy}
+            yes {$obj destroy_later}
         }
     }
-    method popup_rename_state {obj} {
-        set new_name [.popup.e get]
+    method popup_rename_state {obj new_name} {
         foreach state $States {
             if {$obj != $state && $new_name == [$state get_name]} {
-                tk_messageBox -message "There is already a state called [$obj get_name]!" \
+                tk_messageBox -message "There is already a state called $new_name!" \
                         -icon error -type ok
                 return
             }
         }
-        .popup.l configure -text "Menu: $new_name"
         $obj rename $new_name
     }
-    method popup_state_menu {obj x y} {
-        if {[winfo exists .popup]} {
-            destroy .popup
-        }
-        tk::toplevel .popup
-        wm transient .popup .
-        wm overrideredirect .popup true
-        wm attributes .popup -type popup_menu
-        set parent_geo [winfo geometry $Canvas]
-        regexp {[0-9]+x[0-9]+\+([0-9]+)\+([0-9]+)} $parent_geo parent_geo parent_x parent_y
-        # make popup appear somewhere near the mouse cursor...
-        wm geometry .popup "+[expr {$x + $parent_x}]+[expr {$y + $parent_y}]"
-        label .popup.l -text "Menu: [$obj get_name]"
-        entry .popup.e
-        .popup.e insert 0 [$obj get_name]
-        button .popup.r -text {Rename} -command [list [self object] popup_rename_state $obj]
-        button .popup.d -text {Delete} -command [list [self object] popup_destroy $obj]
-        button .popup.c -text {Close} -command [list destroy .popup]
-        pack .popup.l .popup.e .popup.r .popup.d .popup.c -fill x
+}
+
+
+
+# A basic element on the canvas, handles movement, selection, context
+# menu.  Does not draw anything on its own
+oo::class create basic_element {
+    superclass notifier
+    variable Canvas Parent Id PointerOffset Selected
+    constructor {c p args} {
+        next
+        set Canvas $c
+        set Parent $p
+        $Parent connect destroyed [self object] destroy_later
+        set Selected false
+        my add_elements $args
     }
-    method popup_transition_menu {obj x y} {
-        if {[winfo exists .popup]} {
-            destroy .popup
-        }
-        tk::toplevel .popup
-        wm transient .popup .
-        wm overrideredirect .popup true
-        wm attributes .popup -type popup_menu
-        set parent_geo [winfo geometry $Canvas]
-        regexp {[0-9]+x[0-9]+\+([0-9]+)\+([0-9]+)} $parent_geo parent_geo parent_x parent_y
-        # make popup appear somewhere near the mouse cursor...
-        wm geometry .popup "+[expr {$x + $parent_x}]+[expr {$y + $parent_y}]"
-        label .popup.l -text "Menu: [$obj get_name]"
-        entry .popup.e
-        .popup.e insert 0 [$obj get_name]
-        button .popup.r -text {Rename} -command [list [self object] rename_transition $obj]
-        button .popup.d -text {Delete} -command [list [self object] popup_destroy $obj]
-        button .popup.c -text {Close} -command [list destroy .popup]
-        pack .popup.l .popup.e .popup.r .popup.d .popup.c -fill x
+    destructor {
+        $Canvas delete [self object]
+        next
     }
-    method rename_transition {obj} {
-        .popup.l configure -text "Menu: [.popup.e get]"
-        $obj rename [.popup.e get]
+    method get_canvas {} {
+        return $Canvas
+    }
+    method get_parent {} {
+        return $Parent
+    }
+    method add_elements {args} {
+        foreach id $args {
+            $Canvas addtag [self object] withtag $id
+            $Canvas bind [self object] <ButtonPress-1> \
+                "[self object] save_pointer_offset %x %y"
+            $Canvas bind [self object] <B1-Motion> "[self object] move %x %y"
+            $Canvas bind [self object] <3> \
+                "[self object] emit popup_menu"
+        }
+
+    }
+    # On ButtonPress save the location of the pointer so we have a
+    # basis for moving the state without it jumping all over the
+    # place.
+    method save_pointer_offset {x y} {
+        lassign [$Canvas bbox [self object]] nw_x nw_y
+        set PointerOffset [list [expr {$x - $nw_x}] [expr {$y - $nw_y}]]
+        my select
+    }
+    method move {raw_x raw_y} {
+        lassign $PointerOffset offset_x offset_y
+        lassign [clamp_coords_inside_bbox \
+                     [list [expr {$raw_x - $offset_x}] \
+                          [expr {$raw_y - $offset_y}]] \
+                     [$Parent get_bbox]] new_x new_y
+        lassign [$Canvas bbox [self object]] old_x old_y
+        set rel_x [expr {$new_x - $old_x}]
+        set rel_y [expr {$new_y - $old_y}]
+        $Canvas move [self object] $rel_x $rel_y
+        my emit redrawn [self object]
+    }
+    method get_bbox {} {
+        return [$Canvas bbox [self object]]
+    }
+    method get_coords {} {
+        return [calc_centre_coords [my get_bbox]]
+    }
+    method select {} {
+        if {!$Selected && [$Parent select [self object]]} {
+            set Selected true
+            my emit selected [self object]
+        }
+    }
+    method deselect {} {
+        if {$Selected} {
+            set Selected false
+            my emit deselected [self object]
+        }
     }
 }
 
 
 
 oo::class create state {
-    superclass notifier
-    variable Canvas App Name Selected Tid Rid PointerOffset
+    superclass basic_element
+    variable Name Tid Rid
     constructor {c a x y name} {
-        next
-        set Canvas $c
-        set App $a
         set Name $name
-        set Selected false
-        set PointerOffset [list 0 0]
-        set Tid [$Canvas create text $x $y -text $name -fill black -activefill red]
-        set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
-        $Canvas addtag [self object] withtag $Tid
-        $Canvas addtag [self object] withtag $Rid
-        $Canvas bind [self object] <ButtonPress-1> "[self object] save_pointer_offset %x %y"
-        $Canvas bind [self object] <B1-Motion> "[self object] move %x %y"
-        $Canvas bind [self object] <3> "$App popup_state_menu [self object] %x %y"
-        $Canvas lower $Rid $Tid
+        next $c $a
+        set Tid [$c create text $x $y -text $name -fill black -activefill red]
+        set Rid [$c create rectangle [my get_box_coords] -fill lightgrey]
+        my add_elements $Tid $Rid
+        $c lower $Rid $Tid
+        [self object] connect selected [self object] on_selected
+        [self object] connect deselected [self object] on_deselected
+        [self object] connect popup_menu [self object] on_popup_menu
     }
     destructor {
-        $Canvas delete [self object]
         next
     }
-    # On ButtonPress save the location of the pointer so we have a
-    # basis for moving the state without it jumping all over the
-    # place.
-    method save_pointer_offset {x y} {
-        lassign [$Canvas bbox $Rid] nw_x nw_y
-        set PointerOffset [list [expr {$x - $nw_x}] [expr {$y - $nw_y}]]
-        # call next action
-        my select
-    }
-    method move {raw_x raw_y} {
-        lassign $PointerOffset offset_x offset_y
-        lassign [clamp_coords_inside_bbox \
-                     [list [expr {$raw_x - $offset_x}] [expr {$raw_y - $offset_y}]] \
-                     [$App get_bbox]] new_x new_y
-        lassign [$Canvas bbox $Rid] old_x old_y
-        set rel_x [expr {$new_x - $old_x}]
-        set rel_y [expr {$new_y - $old_y}]
-        $Canvas move [self object] $rel_x $rel_y
-        my emit redrawn
-    }
     method get_box_coords {} {
-        lassign [$Canvas bbox $Tid] x1 y1 x2 y2
+        lassign [[my get_canvas] bbox $Tid] x1 y1 x2 y2
         set o 5
         return [list [expr {$x1 - $o}] [expr {$y1 - $o}] [expr {$x2 + $o}] [expr {$y2 + $o}]]
     }
@@ -608,38 +709,36 @@ oo::class create state {
     method serialise {f} {
         puts $f "\[State\]"
         puts $f "name=[my get_name]"
-        puts $f "position=[my GetCoords]"
+        puts $f "position=[my get_coords]"
     }
     method get_name {} {
         return $Name
     }
     method rename {new_name} {
         set Name $new_name
-        $Canvas dchars $Tid 0 end
-        $Canvas insert $Tid end $Name
-        $Canvas delete $Rid
+        [my get_canvas] dchars $Tid 0 end
+        [my get_canvas] insert $Tid end $Name
+        [my get_canvas] delete $Rid
         # can't find a way to resize the rectangle, so just recreate
         # it.  Renaming is in any case a rare operation, say compared
         # to moving the rectangle.
-        set Rid [$Canvas create rectangle [my get_box_coords] -fill lightgrey]
-        $Canvas lower $Rid $Tid
-        $Canvas addtag [self object] withtag $Rid
+        set Rid [[my get_canvas] create rectangle [my get_box_coords] -fill lightgrey]
+        [my get_canvas] lower $Rid $Tid
+        my add_elements $Rid
         my emit redrawn
     }
-    method select {} {
-        if {[$App select [self object]]} {
-            # select is ok now
-            set Selected true
-            $Canvas itemconfigure $Rid -fill blue
-        }
+    method on_selected {sender} {
+        [my get_canvas] itemconfigure $Rid -fill blue
     }
-    method deselect {} {
-        set Selected false
-        $Canvas itemconfigure $Rid -fill lightgrey
-        $App deselect [self object]
+    method on_deselected {sender} {
+        [my get_canvas] itemconfigure $Rid -fill lightgrey
     }
-    method GetCoords {} {
-        $Canvas coords $Tid
+    method on_popup_menu {} {
+        create_popup_menu "$Name" \
+            [list [list "Delete" "[self object] destroy_later"] \
+                 [list "Rename" \
+                      "create_rename_popup $Name [my get_parent] \
+popup_rename_state [self object]"]]
     }
 }
 
@@ -647,29 +746,36 @@ oo::class create state {
 
 oo::class create transition {
     superclass notifier
-    variable Canvas App Src Dst Event MidPoint Lid1 Lid2 Cid Tid
-    constructor {canvas a src dst event} {
+    variable Canvas App Src Dst Event MidPoint MidElement Lid1 Lid2 Cid Tid
+    constructor {canvas a src dst event args} {
         next
         set Canvas $canvas
         set App $a
         set Src $src
         set Dst $dst
         set Event $event
-        set MidPoint [my GetMidPointCoords]
+        if {$args == {}} {
+            set MidPoint [my GetMidPointCoords]
+        } else {
+            set MidPoint {*}$args
+        }
+        set MidElement [basic_element new $canvas $a]
+        set Tid [$Canvas create text [my GetTextCoords] -text $Event]
+        set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
         set Lid1 [$Canvas create line [my GetLine1Coords] -smooth raw]
         set Lid2 [$Canvas create line [my GetLine2Coords] -arrow last -smooth raw]
         $Canvas lower $Lid1
         $Canvas lower $Lid2
-        set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
-        set Tid [$Canvas create text [my GetTextCoords] -text $Event]
-        $Canvas addtag [self object] withtag $Cid
-        $Canvas addtag [self object] withtag $Tid
         $Canvas raise $Cid $Lid1
         $Canvas raise $Cid $Lid2
         $Canvas raise $Cid $Tid
-        $Canvas bind [self object] <B1-Motion> "[self object] move_circle %x %y"
-        $Canvas bind [self object] <3> "$App popup_transition_menu [self object] %x %y"
+        $MidElement add_elements $Cid $Tid
+        $Canvas addtag [self object] withtag $Lid1
+        $Canvas addtag [self object] withtag $Lid2
+        $MidElement connect redrawn [self object] redraw
+        $MidElement connect popup_menu [self object] on_popup_menu
 
+        [self object] connect destroyed $MidElement destroy_later
         $Src connect destroyed [self object] destroy_later
         $Src connect redrawn [self object] redraw
         if {$Src != $Dst} {
@@ -679,7 +785,7 @@ oo::class create transition {
     }
     destructor {
         next
-        $Canvas delete $Lid1 $Lid2 [self object]
+        $Canvas delete [self object]
     }
     method serialise {f} {
         puts $f "\[Transition\]"
@@ -693,25 +799,18 @@ oo::class create transition {
         $Canvas dchars $Tid 0 end
         $Canvas insert $Tid end $Event
     }
-    method move_circle {x y} {
-        my set_points [clamp_coords_inside_bbox [list $x $y] [$App get_bbox]]
-    }
     method redraw {args} {
+        set MidPoint [calc_centre_coords [$Canvas bbox $Cid]]
         my RedrawLine
-    }
-    method set_points {points} {
-        lassign $MidPoint old_x old_y
-        lassign $points screen_x screen_y
-        set new_x [$Canvas canvasx $screen_x]
-        set new_y [$Canvas canvasy $screen_y]
-        set MidPoint [list $new_x $new_y]
-        my RedrawLine
-        set rel_x [expr {$new_x - $old_x}]
-        set rel_y [expr {$new_y - $old_y}]
-        $Canvas move [self object] $rel_x $rel_y
     }
     method get_name {} {
         return $Event
+    }
+    method on_popup_menu {} {
+        create_popup_menu "$Event" \
+            [list [list "Delete" "[self object] destroy_later"] \
+                 [list "Rename" \
+                      "create_rename_popup $Event [self object] rename"]]
     }
     method RedrawLine {} {
         $Canvas dchars $Lid1 0 end
@@ -737,26 +836,71 @@ oo::class create transition {
     method GetLine1Coords {} {
         lassign [$Src get_exit_coords] exitx exity
         lassign $MidPoint mx my
-        return [list $exitx $exity [expr {$exitx + [my GetBezierOffset]}] $exity $mx $my $mx $my]
+        return [list $exitx $exity [expr {$exitx + [my GetBezierOffset]}] \
+                    $exity $mx $my $mx $my]
     }
     method GetLine2Coords {} {
         lassign $MidPoint mx my
         lassign [$Dst get_entry_coords] entryx entryy
         set offset [my GetBezierOffset]
-        return [list $mx $my $mx $my [expr {$entryx - [my GetBezierOffset]}] $entryy $entryx $entryy]
+        return [list $mx $my $mx $my [expr {$entryx - [my GetBezierOffset]}] \
+                    $entryy $entryx $entryy]
     }
     method GetMidPointCoords {} {
         lassign [my GetLineCoords] lsx lsy lex ley
         # special case for self transitions, shift down and to left
         if {$Src == $Dst} {
-            return [list [expr {$lsx + ($lex - $lsx) / 2 - 70}] [expr {$lsy + ($ley - $lsy) / 2 + 50}]]
+            return [list [expr {$lsx + ($lex - $lsx) / 2 - 70}] \
+                        [expr {$lsy + ($ley - $lsy) / 2 + 50}]]
         }
-        return [list [expr {$lsx + ($lex - $lsx) / 2}] [expr {$lsy + ($ley - $lsy) / 2}]]
+        return [list [expr {$lsx + ($lex - $lsx) / 2}] \
+                    [expr {$lsy + ($ley - $lsy) / 2}]]
     }
     method GetCircleCoords {} {
         lassign $MidPoint mx my
         set r [my GetCircleRadius]
         return [list [expr {$mx - $r}] [expr {$my - $r}] [expr {$mx + $r}] [expr {$my + $r}]]
+    }
+}
+
+
+
+# A basic state on the canvas; behaves somewhat like a state
+oo::class create initial_state {
+    superclass basic_element
+    variable Id
+    constructor {c p x y} {
+        set r 6
+        set Id [$c create oval [calc_circle_bbox $x $y $r] \
+                    -fill lightgrey -activefill red]
+        next $c $p $Id
+        [self object] connect selected [self object] on_selected
+        [self object] connect deselected [self object] on_deselected
+        [self object] connect popup_menu [self object] on_popup_menu
+    }
+    destructor {
+        next
+    }
+    method get_exit_coords {} {
+        lassign [my get_bbox] x1 y1 x2 y2
+        return [list $x2 [expr {$y1 + ($y2 - $y1) / 2}]]
+    }
+    method serialise {f} {
+        puts $f "\[Initial State\]"
+        puts $f "position=[my get_coords]"
+    }
+    method get_name {} {
+        return "InitialState"
+    }
+    method on_selected {sender} {
+        [my get_canvas] itemconfigure $Id -fill blue
+    }
+    method on_deselected {sender} {
+        [my get_canvas] itemconfigure $Id -fill lightgrey
+    }
+    method on_popup_menu {} {
+        create_popup_menu "Initial State" \
+            [list [list "Delete" "[self object] destroy_later"]]
     }
 }
 
