@@ -7,6 +7,7 @@ package require Tk
 
 # TODO high priority
 #
+# - initial transition has no event
 # - change initial/final state entry/exit
 # - group UI buttons (WIP)
 # - fix arrows always enter state horizontally
@@ -311,6 +312,7 @@ proc continue_rename_popup {args} {
     {*}$args [.popup.e get]
     destroy .popup
 }
+
 
 
 oo::class create my_app {
@@ -388,7 +390,7 @@ oo::class create my_app {
         }
     }
     method CreateObject {mode d} {
-        switch -exact -- $mode {
+        switch -- $mode {
             State {
                 if {[dict exists $d name]
                     && [dict exists $d position]} {
@@ -422,7 +424,6 @@ oo::class create my_app {
             }
             {Initial State} {
                 if {[dict exists $d position]} {
-                    puts "[dict get $d position]"
                     set new_state [initial_state new $Canvas [self object] \
                                        {*}[dict get $d position]]
                     lappend States $new_state
@@ -555,11 +556,20 @@ oo::class create my_app {
         if {$CurState != {addTransition}} {
             return false
         }
+        set methods [info object methods $obj -all]
         if {$Selected == {}} {
+            if {[lsearch -exact $methods get_exit_coords] == -1} {
+                # can't use that state as a source
+                return false
+            }
             set Selected $obj
             my set_status_bar {Select the second state...}
             return true
         } else {
+            if {[lsearch -exact $methods get_entry_coords] == -1} {
+                # can't use that state as a destination
+                return false
+            }
             set new_transition [transition new $Canvas [self object] \
                                     $Selected $obj "foobar"]
             lappend Transitions $new_transition
@@ -876,7 +886,7 @@ oo::class create initial_state {
     constructor {c p x y} {
         set r 6
         set Id [$c create oval [calc_circle_bbox $x $y $r] \
-                    -fill lightgrey -activefill red]
+                    -fill black -activefill red]
         next $c $p $Id
         [self object] connect selected [self object] on_selected
         [self object] connect deselected [self object] on_deselected
@@ -900,7 +910,7 @@ oo::class create initial_state {
         [my get_canvas] itemconfigure $Id -fill blue
     }
     method on_deselected {sender} {
-        [my get_canvas] itemconfigure $Id -fill lightgrey
+        [my get_canvas] itemconfigure $Id -fill black
     }
     method on_popup_menu {} {
         create_popup_menu "Initial State" \
