@@ -506,6 +506,7 @@ oo::class create my_app {
         my set_status_bar {Click to add new state...}
     }
     method add_state {x y} {
+        lassign [clamp_coords_inside_bbox [list $x $y] [my get_bbox]] x y
         switch -- $CurState {
             addInitialState {
                 set new_state [initial_state new $Canvas [self object] $x $y]
