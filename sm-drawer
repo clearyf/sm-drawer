@@ -283,10 +283,13 @@ proc create_popup_menu {name buttons} {
     create_popup
     label .popup.l -text "Menu: $name"
     pack .popup.l -fill x
+    set i 0
     foreach b $buttons {
-        lassign $b t c
-        button ".popup.n_$c" -text $t -command "$c"
-        pack ".popup.n_$c" -fill x
+        set t [lindex $b 0]
+        set c [lrange $b 1 end]
+        button ".popup.n_$i" -text $t -command {*}$c
+        pack ".popup.n_$i" -fill x
+        incr i
     }
     button .popup.c -text {Close} -command "destroy .popup"
     pack .popup.c -fill x
