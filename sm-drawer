@@ -248,12 +248,6 @@ test_assert_false {info object isa object $bar} "object is destroyed"
 
 ### handy functions
 
-proc clamp_coords_inside_bbox {coord bbox} {
-    lassign $coord x y
-    lassign $bbox bx1 by1 bx2 by2
-    return [list [expr {max($bx1,min($bx2,$x))}] [expr {max($by1,min($by2,$y))}]]
-}
-
 proc calc_circle_bbox {x y r} {
     return [list [expr {$x - $r}] [expr {$y - $r}] [expr {$x + $r}] [expr {$y + $r}]]
 }
@@ -510,7 +504,6 @@ oo::class create my_app {
         my set_status_bar {Click to add new state...}
     }
     method add_state {x y} {
-        lassign [clamp_coords_inside_bbox [list $x $y] [my get_bbox]] x y
         switch -- $CurState {
             addInitialState {
                 set new_state [initial_state new $Canvas [self object] $x $y]
@@ -623,6 +616,7 @@ oo::class create basic_element {
         next
         set Canvas $c
         set Parent $p
+        set PointerOffset {0 0}
         $Parent connect destroyed [self object] destroy_later
         set Selected false
         my add_elements $args
@@ -641,32 +635,66 @@ oo::class create basic_element {
         foreach id $args {
             $Canvas addtag [self object] withtag $id
             $Canvas bind [self object] <ButtonPress-1> \
-                "[self object] save_pointer_offset %x %y"
+                "[self object] handle_button1_press %x %y"
             $Canvas bind [self object] <B1-Motion> "[self object] move %x %y"
             $Canvas bind [self object] <3> \
                 "[self object] emit popup_menu"
         }
+        my Check_parent_bbox
+    }
+    method Check_parent_bbox {} {
+        # move inside parent bbox
+        lassign [$Canvas bbox [self object]] x1 y1 x2 y2
+        if {$x1 == {}} {
+            # don't have any elements yet
+            return
+        }
+        lassign [$Parent get_bbox] px1 py1 px2 py2
 
+        # sanity check, check parent that is bigger than object!
+        set w [expr {$x2 - $x1}]
+        set h [expr {$y2 - $y1}]
+        if {!($w < ($px2 - $px1) || $h < ($py2 - $py1))} {
+            throw BBOX_TOO_SMALL \
+                "$w,$h doesn't fit inside ($px1,$py1,$px2,$py2)"
+        }
+
+        # calculate any adjustments required
+        set adj_x 0
+        set adj_y 0
+        if {$x1 < $px1} {
+            set adj_x [expr {$px1 - $x1}]
+        } elseif {$x2 > $px2} {
+            set adj_x [expr {$px2 - $x2}]
+        }
+        if {$y1 < $py1} {
+            set adj_y [expr {$py1 - $y1}]
+        } elseif {$y2 > $py2} {
+            set adj_y [expr {$py2 - $y2}]
+        }
+        $Canvas move [self object] $adj_x $adj_y
+        my emit redrawn [self object]
+    }
+    method handle_button1_press {x y} {
+        my Save_pointer_offset $x $y
+        my select
     }
     # On ButtonPress save the location of the pointer so we have a
     # basis for moving the state without it jumping all over the
     # place.
-    method save_pointer_offset {x y} {
+    method Save_pointer_offset {x y} {
         lassign [$Canvas bbox [self object]] nw_x nw_y
         set PointerOffset [list [expr {$x - $nw_x}] [expr {$y - $nw_y}]]
-        my select
     }
     method move {raw_x raw_y} {
         lassign $PointerOffset offset_x offset_y
-        lassign [clamp_coords_inside_bbox \
-                     [list [expr {$raw_x - $offset_x}] \
-                          [expr {$raw_y - $offset_y}]] \
-                     [$Parent get_bbox]] new_x new_y
+        set new_x [expr {$raw_x - $offset_x}]
+        set new_y [expr {$raw_y - $offset_y}]
         lassign [$Canvas bbox [self object]] old_x old_y
         set rel_x [expr {$new_x - $old_x}]
         set rel_y [expr {$new_y - $old_y}]
         $Canvas move [self object] $rel_x $rel_y
-        my emit redrawn [self object]
+        my Check_parent_bbox
     }
     method get_bbox {} {
         return [$Canvas bbox [self object]]
