@@ -325,8 +325,8 @@ oo::class create my_app {
             -yscrollcommand {.scroll_l set} -scrollregion {0 0 800 800}
         frame .top
         frame .bot
-        button .top.save -text {Save} -command [list [self object] save]
-        button .top.load -text {Load} -command [list [self object] load]
+        button .top.save -text {Save} -command [list [self object] save [my GetFile]]
+        button .top.load -text {Load} -command [list [self object] load [my GetFile]]
         button .top.quit -text {Quit} -command exit
         label .bot.status_bar -text {Idle}
         button .top.add_istate -text {Add Initial State} \
@@ -370,15 +370,18 @@ oo::class create my_app {
             set Selected {}
         }
     }
-    method save {} {
+    method SaveAllToChannel {chan} {
+        foreach state $States {
+            $state serialise $chan
+        }
+        foreach transition $Transitions {
+            $transition serialise $chan
+        }
+    }
+    method save {filename} {
         try {
-            set f [open {saved_data.ini} {w}]
-            foreach state $States {
-                $state serialise $f
-            }
-            foreach transition $Transitions {
-                $transition serialise $f
-            }
+            set f [open $filename {w}]
+            my SaveAllToChannel $f
         } finally {
             close $f
         }
@@ -430,7 +433,7 @@ oo::class create my_app {
             }
         }
     }
-    method load {} {
+    method load {filename} {
         if {$CurState != {idle}} {
             return
         }
@@ -445,7 +448,7 @@ oo::class create my_app {
         }
 
         try {
-            set f [open {saved_data.ini} {r}]
+            set f [open $filename r]
             set d [dict create]
             set mode {}
             while {[gets $f line] >= 0} {
@@ -472,6 +475,19 @@ oo::class create my_app {
         } finally {
             close $f
         }
+        # TODO fix this sanity test: create tmp saved file and compare
+        # to file just loaded.
+        #
+        # try {
+        #     my save tmpfile.ini
+        #     set l [exec md5sum tmpfile.ini $filename | cut -c -32]
+        #     if {[lindex $l 0] != [lindex $l 1]} {
+        #         tk_messageBox -message "Problem detected with save-load functionality!" \
+        #             -icon error -type ok
+        #     }
+        # } finally {
+        #     exec rm -f tmpfile.ini
+        # }
     }
     method get_bbox {} {
         return [$Canvas cget -scrollregion]
@@ -602,6 +618,9 @@ oo::class create my_app {
             }
         }
         $obj rename $new_name
+    }
+    method GetFile {} {
+        return saved_data.ini
     }
 }
 
