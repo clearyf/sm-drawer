@@ -7,7 +7,7 @@ package require Tk
 
 # TODO high priority
 #
-# - initial transition has no event
+# - initial transition should have no event
 # - change initial/final state entry/exit
 # - group UI buttons (WIP)
 # - fix arrows always enter state horizontally
@@ -57,7 +57,8 @@ oo::class create notifier {
         if {[my get_destroy_pending]} {
             # this could be the sign of a mistake, as if an object is
             # pending deletion then direct destroy is not a good sign.
-            puts "WARN: [self object] is being destroyed directly while pending destroy is active"
+            puts "WARN: [self object] is being destroyed directly while pending\
+ destroy is active"
             after cancel $DestroyPending
         }
         my emit destroyed
@@ -109,7 +110,8 @@ oo::class create notifier {
             error "Cannot connect destroyed to destroy, use destroy_later!"
         }
         if {[dict exists $Listeners $name]} {
-            set idx [lsearch -exact [dict get $Listeners $name] [list $dst {*}$args]]
+            set idx [lsearch -exact [dict get $Listeners $name] \
+                     [list $dst {*}$args]]
             if {$idx != -1} {
                 # already present, break loop.  when a connection is
                 # made a second connection is made to make sure that
@@ -227,7 +229,8 @@ $bar beep
 test_assert_true {$foo heard_beep} "Beep was heard"
 
 # test that this gives us an error
-test_assert_true {catch {$foo connect destroyed $bar destroy}} "connect destroyed -> destroy is an error!"
+test_assert_true {catch {$foo connect destroyed $bar destroy}} \
+    "connect destroyed -> destroy is an error!"
 
 # test add destroy_later for tearing down networks of notifiers
 $foo connect destroyed $bar destroy_later
@@ -249,7 +252,8 @@ test_assert_false {info object isa object $bar} "object is destroyed"
 ### handy functions
 
 proc calc_circle_bbox {x y r} {
-    return [list [expr {$x - $r}] [expr {$y - $r}] [expr {$x + $r}] [expr {$y + $r}]]
+    return [list [expr {$x - $r}] [expr {$y - $r}] \
+            [expr {$x + $r}] [expr {$y + $r}]]
 }
 
 proc calc_centre_coords {bbox} {
@@ -325,8 +329,10 @@ oo::class create my_app {
             -yscrollcommand {.scroll_l set} -scrollregion {0 0 800 800}
         frame .top
         frame .bot
-        button .top.save -text {Save} -command [list [self object] save [my GetFile]]
-        button .top.load -text {Load} -command [list [self object] load [my GetFile]]
+        button .top.save -text {Save} \
+            -command [list [self object] save [my GetFile]]
+        button .top.load -text {Load} \
+            -command [list [self object] load [my GetFile]]
         button .top.quit -text {Quit} -command exit
         label .bot.status_bar -text {Idle}
         button .top.add_istate -text {Add Initial State} \
@@ -392,12 +398,14 @@ oo::class create my_app {
                 if {[dict exists $d name]
                     && [dict exists $d position]} {
                     set new_state [state new $Canvas [self object] \
-                                       {*}[dict get $d position] [dict get $d name]]
+                                       {*}[dict get $d position] \
+                                       [dict get $d name]]
                     lappend States $new_state
                     $new_state connect destroyed [self object] \
                         state_destroyed $new_state
                 } else {
-                    puts "Don't have enough information to construct a state: $d"
+                    puts "Don't have enough information to construct a state: \
+$d"
                 }
             }
             Transition {
@@ -416,7 +424,8 @@ oo::class create my_app {
                     $new_transition connect destroyed [self object] \
                         transition_destroyed $new_transition
                 } else {
-                    puts "Don't have enough information to construct a transition: $d"
+                    puts "Don't have enough information to construct a \
+transition: $d"
                 }
             }
             {Initial State} {
@@ -482,8 +491,8 @@ oo::class create my_app {
         #     my save tmpfile.ini
         #     set l [exec md5sum tmpfile.ini $filename | cut -c -32]
         #     if {[lindex $l 0] != [lindex $l 1]} {
-        #         tk_messageBox -message "Problem detected with save-load functionality!" \
-        #             -icon error -type ok
+        #         set msg "Problem detected with save-load functionality!"
+        #         tk_messageBox -message $msg -icon error -type ok
         #     }
         # } finally {
         #     exec rm -f tmpfile.ini
@@ -536,7 +545,8 @@ oo::class create my_app {
                         my get_state "state$StateIdx"
                     }
                 } trap {STATE_NOT_FOUND} {} {}
-                set new_state [state new $Canvas [self object] $x $y "state$StateIdx"]
+                set name "state$StateIdx"
+                set new_state [state new $Canvas [self object] $x $y $name]
             }
             default {
                 return
@@ -612,8 +622,8 @@ oo::class create my_app {
     method popup_rename_state {obj new_name} {
         foreach state $States {
             if {$obj != $state && $new_name == [$state get_name]} {
-                tk_messageBox -message "There is already a state called $new_name!" \
-                        -icon error -type ok
+                set msg "There is already a state called $new_name!"
+                tk_messageBox -message $msg -icon error -type ok
                 return
             }
         }
@@ -757,7 +767,10 @@ oo::class create state {
     method get_box_coords {} {
         lassign [[my get_canvas] bbox $Tid] x1 y1 x2 y2
         set o 5
-        return [list [expr {$x1 - $o}] [expr {$y1 - $o}] [expr {$x2 + $o}] [expr {$y2 + $o}]]
+        return [list [expr {$x1 - $o}] \
+                [expr {$y1 - $o}] \
+                [expr {$x2 + $o}] \
+                [expr {$y2 + $o}]]
     }
     method get_entry_coords {} {
         lassign [my get_box_coords] x1 y1 x2 y2
@@ -783,7 +796,8 @@ oo::class create state {
         # can't find a way to resize the rectangle, so just recreate
         # it.  Renaming is in any case a rare operation, say compared
         # to moving the rectangle.
-        set Rid [[my get_canvas] create rectangle [my get_box_coords] -fill lightgrey]
+        set Rid [[my get_canvas] create rectangle [my get_box_coords] \
+                     -fill lightgrey]
         [my get_canvas] lower $Rid $Tid
         my add_elements $Rid
         my emit redrawn
@@ -800,6 +814,42 @@ oo::class create state {
                  [list "Rename" \
                       "create_rename_popup $Name [my get_parent] \
 popup_rename_state [self object]"]]
+    }
+}
+
+
+
+oo::class create line {
+    superclass notifier
+    variable Canvas Parent Src Dst Lid
+    constructor {canvas parent src dst args} {
+        next
+        set Canvas $canvas
+        set Parent $parent
+        set Src $src
+        set Dst $dst
+        set Lid [$Canvas create line [my GetCoords] -smooth raw {*}$args]
+        $Canvas lower $Lid
+        $Canvas addtag [self object] withtag $Lid
+        $Parent connect redrawn [self object] redraw
+        $Parent connect destroyed [self object] destroy_later
+    }
+    destructor {
+        next
+        $Canvas delete [self object]
+    }
+    method GetCoords {} {
+        set s [uplevel 0 $Src]
+        set d [uplevel 0 $Dst]
+        lassign $s x1 y1
+        lassign $d x2 y2
+        # TODO introduce drag-able control points
+        return [list $x1 $y1 [expr {$x1 + 30}] $y1 \
+                    [expr {$x2 - 30}] $y2 $x2 $y2]
+    }
+    method redraw {} {
+        $Canvas dchars $Lid 0 end
+        $Canvas insert $Lid end [my GetCoords]
     }
 }
 
@@ -822,17 +872,15 @@ oo::class create transition {
         }
         set MidElement [basic_element new $canvas $a]
         set Tid [$Canvas create text [my GetTextCoords] -text $Event]
-        set Cid [$Canvas create oval [my GetCircleCoords] -fill black -activefill red]
-        set Lid1 [$Canvas create line [my GetLine1Coords] -smooth raw]
-        set Lid2 [$Canvas create line [my GetLine2Coords] -arrow last -smooth raw]
-        $Canvas lower $Lid1
-        $Canvas lower $Lid2
-        $Canvas raise $Cid $Lid1
-        $Canvas raise $Cid $Lid2
+        set Cid [$Canvas create oval [my GetCircleCoords] -fill black \
+                 -activefill red]
+        set Lid1 [line new $Canvas [self object] [list $Src get_exit_coords] \
+                  [list [self object] get_midpoint_coords]]
+        set Lid2 [line new $Canvas [self object] \
+                  [list [self object] get_midpoint_coords] \
+                  [list $Dst get_entry_coords] -arrow last]
         $Canvas raise $Cid $Tid
         $MidElement add_elements $Cid $Tid
-        $Canvas addtag [self object] withtag $Lid1
-        $Canvas addtag [self object] withtag $Lid2
         $MidElement connect redrawn [self object] redraw
         $MidElement connect popup_menu [self object] on_popup_menu
 
@@ -862,7 +910,7 @@ oo::class create transition {
     }
     method redraw {args} {
         set MidPoint [calc_centre_coords [$Canvas bbox $Cid]]
-        my RedrawLine
+        my emit redrawn
     }
     method get_name {} {
         return $Event
@@ -873,18 +921,8 @@ oo::class create transition {
                  [list "Rename" \
                       "create_rename_popup $Event [self object] rename"]]
     }
-    method RedrawLine {} {
-        $Canvas dchars $Lid1 0 end
-        $Canvas dchars $Lid2 0 end
-        $Canvas insert $Lid1 end [my GetLine1Coords]
-        $Canvas insert $Lid2 end [my GetLine2Coords]
-    }
     method GetCircleRadius {} {
         return 5
-    }
-    method GetBezierOffset {} {
-        # looks ok
-        return 100
     }
     method GetTextCoords {} {
         lassign $MidPoint x y
@@ -894,18 +932,8 @@ oo::class create transition {
     method GetLineCoords {} {
         return [list {*}[$Src get_exit_coords] {*}[$Dst get_entry_coords]]
     }
-    method GetLine1Coords {} {
-        lassign [$Src get_exit_coords] exitx exity
-        lassign $MidPoint mx my
-        return [list $exitx $exity [expr {$exitx + [my GetBezierOffset]}] \
-                    $exity $mx $my $mx $my]
-    }
-    method GetLine2Coords {} {
-        lassign $MidPoint mx my
-        lassign [$Dst get_entry_coords] entryx entryy
-        set offset [my GetBezierOffset]
-        return [list $mx $my $mx $my [expr {$entryx - [my GetBezierOffset]}] \
-                    $entryy $entryx $entryy]
+    method get_midpoint_coords {} {
+        return $MidPoint
     }
     method GetMidPointCoords {} {
         lassign [my GetLineCoords] lsx lsy lex ley
@@ -914,13 +942,16 @@ oo::class create transition {
             return [list [expr {$lsx + ($lex - $lsx) / 2 - 70}] \
                         [expr {$lsy + ($ley - $lsy) / 2 + 50}]]
         }
+        # get midpoint of line between Src & Dst
         return [list [expr {$lsx + ($lex - $lsx) / 2}] \
                     [expr {$lsy + ($ley - $lsy) / 2}]]
     }
+    # get bbox around circle (x1 y1 x2 y2)
     method GetCircleCoords {} {
         lassign $MidPoint mx my
         set r [my GetCircleRadius]
-        return [list [expr {$mx - $r}] [expr {$my - $r}] [expr {$mx + $r}] [expr {$my + $r}]]
+        return [list [expr {$mx - $r}] [expr {$my - $r}] \
+                [expr {$mx + $r}] [expr {$my + $r}]]
     }
 }
 
